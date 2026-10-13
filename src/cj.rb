@@ -20,7 +20,7 @@ module CJ
     def cmd_name
       'Инсоляция — выбрать точки'
     end
-    
+
 
     DEFAULT_RADIUS_MM = 100.0
     DEFAULT_MAX_LEN_M = 1000.0
@@ -560,7 +560,7 @@ module CJ
       streaks << current if current > 0
       streaks
     end
-    
+
     # def add_cone(entities, origin, dir, length, base_radius, color)
     #   return nil if length <= 0.0
     #   return nil if base_radius <= 0.0
@@ -667,7 +667,7 @@ module CJ
 
       log("Label: #{text}")
     end
-    
+
     def log(msg)
       puts("[CJ::RayTubesUp] #{msg}")
     end
@@ -784,7 +784,7 @@ module CJ
     #   grp.material = color
     #   grp
     # end
-    
+
     def add_cone_group(entities, origin, dir, length, base_radius, color, tag: nil, name: nil)
       min_len = 1.mm
       min_radius = 0.5.mm
@@ -1090,7 +1090,9 @@ module CJ
 
     def choose_csv_directory
       previous = Sketchup.read_default('CJ_Insolation', 'csv_directory', '')
-      directory = UI.select_directory(title: 'Папка для CSV-отчётов', directory: previous.empty? ? nil : previous)
+      options = { title: 'Папка для CSV-отчётов' }
+      options[:directory] = previous unless previous.empty?
+      directory = UI.select_directory(options)
       return nil unless directory
       Sketchup.write_default('CJ_Insolation', 'csv_directory', directory)
       directory
