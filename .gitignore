@@ -1,0 +1,8 @@
+reports/*.json
+*.skb
+tooling/runtime/
+__pycache__/
+exports/*.csv
+reports/*.csv
+dist/
+tooling/mcp/config.example.toml
