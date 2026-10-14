@@ -2,9 +2,9 @@
 # cj_ray_tubes_up.rb
 
 require 'sketchup.rb'
-require 'csv'
 require 'fileutils'
 require 'securerandom'
+require_relative 'version'
 
 module CJ
   module RayTubesUp
@@ -21,12 +21,21 @@ module CJ
       'Инсоляция — выбрать точки'
     end
 
+    def connect_bridge
+      bridge_file = File.expand_path('../tooling/sketchup_bridge.rb', __dir__)
+      unless defined?(CJBridge) && CJBridge.respond_to?(:source_stamp) && CJBridge.source_stamp == File.mtime(bridge_file).to_f
+        raise "CJ Bridge not found: #{bridge_file}" unless File.file?(bridge_file)
+        Kernel.load(bridge_file)
+      end
+      CJBridge.connect
+    rescue StandardError => error
+      UI.messagebox("Не удалось подключить CJ Bridge: #{error.class}: #{error.message}")
+      false
+    end
 
-    DEFAULT_RADIUS_MM = 100.0
+
     DEFAULT_MAX_LEN_M = 1000.0
     DEFAULT_TAG_NAME = 'RAYS'.freeze
-    CIRCLE_SEGMENTS = 3
-    CONE_HALF_ANGLE_DEG = 0.1
     TIME_STEP_MINUTES = 1.0 # Current dataset: one direction represents one minute.
 	  L_OFFSET = 10000.0
 
@@ -561,95 +570,6 @@ module CJ
       streaks
     end
 
-    # def add_cone(entities, origin, dir, length, base_radius, color)
-    #   return nil if length <= 0.0
-    #   return nil if base_radius <= 0.0
-
-    #   d = dir.clone
-    #   d.normalize!
-
-    #   base_center = origin.offset(d, length)
-
-    #   cone_edges = []
-    #   cone_faces = []
-
-    #   circle_edges = entities.add_circle(base_center, d, base_radius, CIRCLE_SEGMENTS)
-    #   cone_edges.concat(circle_edges)
-
-    #   base_face = entities.add_face(circle_edges)
-    #   return nil unless base_face
-
-    #   base_face.reverse! if base_face.normal.dot(d) > 0
-    #   base_face.material = color
-    #   base_face.back_material = color
-    #   cone_faces << base_face
-
-    #   base_points = circle_edges.map { |e| e.start.position }
-
-    #   base_points.each_with_index do |pt1, i|
-    #     pt2 = base_points[(i + 1) % base_points.length]
-
-    #     face = entities.add_face(origin, pt1, pt2)
-    #     next unless face
-
-    #     face.material = color
-    #     face.back_material = color
-
-    #     cone_faces << face
-    #     cone_edges.concat(face.edges)
-    #   end
-
-    #   cone_edges.uniq.each do |edge|
-    #     edge.soft = true
-    #     edge.smooth = true
-    #     edge.hidden = true
-    #   end
-
-    #   cone_faces
-    # end
-
-
-    # def add_cone(entities, origin, dir, length, base_radius, color)
-    #   return nil if length <= 0.0
-    #   return nil if base_radius <= 0.0
-
-    #   d = dir.clone
-    #   d.normalize!
-
-    #   base_center = origin.offset(d, length)
-
-    #   circle_edges = entities.add_circle(base_center, d, base_radius, CIRCLE_SEGMENTS)
-    #   base_face = entities.add_face(circle_edges)
-    #   return nil unless base_face
-
-    #   circle_edges.each do |edge|
-    #     edge.hidden = true
-    #     edge.soft = true
-    #     edge.smooth = true
-    #   end
-
-    #   base_face.reverse! if base_face.normal.dot(d) > 0
-    #   base_face.material = color
-    #   base_face.back_material = color
-
-    #   base_points = circle_edges.map { |e| e.start.position }
-
-    #   base_points.each_with_index do |pt1, i|
-    #     pt2 = base_points[(i + 1) % base_points.length]
-    #     face = entities.add_face(origin, pt1, pt2)
-    #     next unless face
-
-    #     face.material = color
-    #     face.back_material = color
-
-    #     face.edges.each do |edge|
-    #       edge.hidden = true
-    #       edge.soft = true
-    #       edge.smooth = true
-    #     end
-    #   end
-    # end
-
     def add_result_label(entities, origin, results, point_number: nil)
       streaks = clear_streaks(results)
       total = streaks.sum
@@ -663,7 +583,8 @@ module CJ
 
       text = "Точка #{point_number}\n#{text}" if point_number
       offset = Geom::Vector3d.new(0, 0, L_OFFSET.mm)
-      entities.add_text(text, origin, offset)
+      label = entities.add_text(text, origin, offset)
+      label.layer = CJ::ResultStyle.tags(Sketchup.active_model)[:labels]
 
       log("Label: #{text}")
     end
@@ -718,158 +639,6 @@ module CJ
       hit_pt = hit[0]
       [hit_pt, origin.distance(hit_pt)]
     end
-
-    # def add_cone_group(entities, origin, dir, length, base_radius, color, tag: nil, name: nil)
-    #   min_len = 1.mm
-    #   min_radius = 0.5.mm
-
-    #   return nil if length.nil? || length <= min_len
-    #   return nil if base_radius.nil? || base_radius <= min_radius
-
-    #   grp = entities.add_group
-    #   grp.name = name if name
-    #   grp.layer = tag if tag
-
-    #   ge = grp.entities
-
-    #   d = dir.clone
-    #   d.normalize!
-
-    #   base_center = origin.offset(d, length)
-
-    #   circle_edges = ge.add_circle(base_center, d, base_radius, CIRCLE_SEGMENTS)
-    #   return grp if circle_edges.nil? || circle_edges.length < 3
-
-    #   base_points = circle_edges.map { |e| e.start.position }
-
-    #   # убираем почти совпадающие точки
-    #   uniq_points = []
-    #   tol = 0.001.mm
-    #   base_points.each do |pt|
-    #     exists = uniq_points.any? { |p| p.distance(pt) < tol }
-    #     uniq_points << pt unless exists
-    #   end
-
-    #   return grp if uniq_points.length < 3
-
-    #   begin
-    #     base_face = ge.add_face(uniq_points)
-    #     if base_face
-    #       base_face.reverse! if base_face.normal.dot(d) > 0
-    #       base_face.material = color
-    #       base_face.back_material = color
-    #     end
-    #   rescue ArgumentError
-    #     log("Skipped base face for #{name}: invalid base geometry")
-    #   end
-
-    #   uniq_points.each_with_index do |pt1, i|
-    #     pt2 = uniq_points[(i + 1) % uniq_points.length]
-
-    #     next if origin.distance(pt1) < tol
-    #     next if origin.distance(pt2) < tol
-    #     next if pt1.distance(pt2) < tol
-
-    #     begin
-    #       face = ge.add_face(origin, pt1, pt2)
-    #       next unless face
-
-    #       face.material = color
-    #       face.back_material = color
-    #     rescue ArgumentError
-    #       log("Skipped side face for #{name}: degenerate triangle")
-    #     end
-    #   end
-
-    #   grp.material = color
-    #   grp
-    # end
-
-    def add_cone_group(entities, origin, dir, length, base_radius, color, tag: nil, name: nil)
-      min_len = 1.mm
-      min_radius = 0.5.mm
-
-      return nil if length.nil? || length <= min_len
-      return nil if base_radius.nil? || base_radius <= min_radius
-
-      grp = entities.add_group
-      grp.name = name if name
-      grp.layer = tag if tag
-
-      ge = grp.entities
-
-      d = dir.clone
-      d.normalize!
-
-      base_center = origin.offset(d, length)
-
-      cone_edges = []
-      cone_faces = []
-
-      circle_edges = ge.add_circle(base_center, d, base_radius, CIRCLE_SEGMENTS)
-      return grp if circle_edges.nil? || circle_edges.length < 3
-
-      cone_edges.concat(circle_edges)
-
-      base_points = circle_edges.map { |e| e.start.position }
-
-      # убираем почти совпадающие точки
-      uniq_points = []
-      tol = 0.001.mm
-
-      base_points.each do |pt|
-        exists = uniq_points.any? { |p| p.distance(pt) < tol }
-        uniq_points << pt unless exists
-      end
-
-      return grp if uniq_points.length < 3
-
-      begin
-        base_face = ge.add_face(uniq_points)
-
-        if base_face
-          base_face.reverse! if base_face.normal.dot(d) > 0
-          base_face.material = color
-          base_face.back_material = color
-
-          cone_faces << base_face
-          cone_edges.concat(base_face.edges)
-        end
-      rescue ArgumentError
-        log("Skipped base face for #{name}: invalid base geometry")
-      end
-
-      uniq_points.each_with_index do |pt1, i|
-        pt2 = uniq_points[(i + 1) % uniq_points.length]
-
-        next if origin.distance(pt1) < tol
-        next if origin.distance(pt2) < tol
-        next if pt1.distance(pt2) < tol
-
-        begin
-          face = ge.add_face(origin, pt1, pt2)
-          next unless face
-
-          face.material = color
-          face.back_material = color
-
-          cone_faces << face
-          cone_edges.concat(face.edges)
-        rescue ArgumentError
-          log("Skipped side face for #{name}: degenerate triangle")
-        end
-      end
-
-      cone_edges.uniq.each do |edge|
-        edge.soft = true
-        edge.smooth = true
-        edge.hidden = true
-      end
-
-      grp.material = color
-      grp
-    end
-
 
     def result_groups(model)
       collections = [model.entities] + model.definitions.map(&:entities)
@@ -929,6 +698,7 @@ module CJ
     end
 
     def add_surface(entities, origin, results, maxlen)
+      layers = CJ::ResultStyle.tags(Sketchup.active_model)
       palette = [['CJ_Surface_Green_50', [0, 200, 0]], ['CJ_Surface_Red_50', [255, 0, 0]]].map do |name, color|
         material = Sketchup.active_model.materials[name] || Sketchup.active_model.materials.add(name)
         material.color = color
@@ -962,10 +732,12 @@ module CJ
           next unless face
           face.material = palette[status]
           face.back_material = palette[status]
+          face.layer = layers[status == 0 ? :green : :red]
         end
       end
       entities.grep(Sketchup::Edge).each do |edge|
         faces = edge.faces
+        edge.layer = faces.first.layer unless faces.empty?
         next unless faces.length == 2 && faces[0].material.color == faces[1].material.color
         edge.soft = true
         edge.smooth = true
@@ -983,6 +755,7 @@ module CJ
         anchor = origin.offset(direction, length).offset(normal, 0.02.m)
         marker = entities.add_group
         marker.name = "#{entry[:minute]} мин — #{entry[:blocked] ? 'тень' : 'солнце'}"
+        marker.layer = layers[:labels]
         marker.set_attribute('CJ_Insolation', 'ray', result[:i])
         marker.set_attribute('CJ_Insolation', 'blocked', entry[:blocked])
         marker.set_attribute('CJ_Insolation', 'minute', entry[:minute])
@@ -999,12 +772,12 @@ module CJ
       end
     end
 
-    def build_batch(model, calculations, mode: :cones)
-      raise ArgumentError, 'Неизвестный режим отображения' unless [:cones, :lines, :surface, :summary].include?(mode)
-      tag = ensure_tag(model, DEFAULT_TAG_NAME)
+    def build_batch(model, calculations, mode: :lines)
+      raise ArgumentError, 'Неизвестный режим отображения' unless [:lines, :surface, :summary].include?(mode)
+      layers = CJ::ResultStyle.tags(model)
       batch = model.entities.add_group
       batch.name = "Insolation_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
-      batch.layer = tag if tag
+      batch.layer = model.layers[0]
       batch.set_attribute('CJ_Insolation', 'result', true)
       batch.set_attribute('CJ_Insolation', 'version', 2)
       batch.set_attribute('CJ_Insolation', 'display_mode', mode.to_s)
@@ -1032,17 +805,15 @@ module CJ
         ([:summary, :surface].include?(mode) ? [] : results).each do |result|
           length = result[:hit_dist] || maxlen
           color = result[:hit_dist] ? Sketchup::Color.new(255, 0, 0) : Sketchup::Color.new(0, 200, 0)
-          if mode == :lines
-            edge = group.entities.add_line(origin, origin.offset(result[:dir], length))
-            edge.material = color if edge
-          else
-            add_cone_group(group.entities, origin, result[:dir], length,
-                         length * Math.tan(CONE_HALF_ANGLE_DEG.degrees), color,
-                         name: "Ray#{result[:i]}_#{result[:hit_dist] ? 'HIT' : 'CLEAR'}")
-          end
+          edge = group.entities.add_line(origin, origin.offset(result[:dir], length))
+          edge.material = color if edge
+          edge.layer = layers[result[:hit_dist] ? :red : :green] if edge
         end
         add_surface(group.entities, origin, results, maxlen) if mode == :surface
         add_result_label(group.entities, origin, results, point_number: number)
+        assessment = assess_insolation(results)
+        group.set_attribute('CJ_Insolation', 'passed', assessment[:passed])
+        CJ::ResultStyle.marker(group.entities, calculation, assessment[:passed], layers)
       end
       batch
     end
@@ -1061,85 +832,146 @@ module CJ
         reason: reasons.empty? ? 'Не выполнено ни одно условие' : reasons.join('; ') }
     end
 
-    def csv_report(calculations, batch)
-      CSV.generate(col_sep: ';', row_sep: "\r\n") do |csv|
-        csv << ['Расчёт_ID', 'Дата расчёта', 'Точка', 'Инсоляция проходит', 'Основание',
-                'Непрерывно >=90 мин', 'Суммарно >=120 мин и сегмент >=60 мин',
-                'Суммарно солнечных минут', 'Максимальный солнечный интервал (мин)',
-                'Солнечные интервалы (мин)', 'Шаг одного вектора (мин)', 'X_мм', 'Y_мм', 'Z_мм', 'Всего отсчётов',
-                'Солнечные отсчёты', 'Затенённые отсчёты', 'Непрерывные солнечные интервалы (отсчёты)',
-                'Максимальный солнечный интервал (отсчёты)', 'Отображение']
-        calculations.each_with_index do |entry, index|
-          streaks = clear_streaks(entry[:results])
-          total = entry[:results].length
-          clear = streaks.sum
-          assessment = assess_insolation(entry[:results])
-          number = batch.get_attribute('CJ_Insolation', 'first_point_number', 1) + index
-          csv << [batch.get_attribute('CJ_Insolation', 'batch_id'), batch.get_attribute('CJ_Insolation', 'created_at'), number,
-                  assessment[:passed] ? 'Проходит' : 'Не проходит', assessment[:reason],
-                  assessment[:continuous] ? 'Да' : 'Нет', assessment[:intermittent] ? 'Да' : 'Нет',
-                  format('%g', assessment[:total_minutes]).tr('.', ','), format('%g', assessment[:max_minutes]).tr('.', ','),
-                  assessment[:segments_minutes].map { |value| format('%g', value).tr('.', ',') }.join(', '),
-                  format('%g', TIME_STEP_MINUTES).tr('.', ','),
-                  *entry[:origin].to_a.map { |n| format('%.3f', n.to_mm).tr('.', ',') },
-                  total, clear, total - clear, streaks.join(', '), streaks.max || 0,
-                  batch.get_attribute('CJ_Insolation', 'display_mode')]
-        end
+    CALCULATION_RAYS_PER_TICK = 24
+
+    def progress_dialog
+      dialog = UI::HtmlDialog.new(dialog_title: 'CJ — расчёт инсоляции',
+                                  preferences_key: 'CJ_CalculationProgress_v1',
+                                  width: 360, height: 150, resizable: false,
+                                  style: UI::HtmlDialog::STYLE_DIALOG)
+      dialog.set_html(<<~HTML)
+        <!doctype html><html lang="ru"><meta charset="utf-8"><style>
+        body{font:14px 'Segoe UI',Arial,sans-serif;margin:18px;color:#202832}
+        #label{margin-bottom:10px} progress{width:100%;height:18px}
+        button{margin-top:14px;padding:7px 18px}
+        </style><div id="label">Подготовка расчёта…</div>
+        <progress id="bar" max="100" value="0"></progress>
+        <button onclick="sketchup.cancel_calculation()">Отменить</button>
+        <script>function updateProgress(done,total){
+          const p=total?Math.floor(done*100/total):0;
+          document.getElementById('bar').value=p;
+          document.getElementById('label').textContent='Проверено лучей: '+done+' из '+total+' ('+p+'%)';
+        }</script></html>
+      HTML
+      dialog
+    end
+
+    def restore_calculation_visibility(job)
+      job[:hidden_states].each do |group, hidden|
+        group.hidden = hidden if group.valid?
       end
     end
 
-    def choose_csv_directory
-      previous = Sketchup.read_default('CJ_Insolation', 'csv_directory', '')
-      options = { title: 'Папка для CSV-отчётов' }
-      options[:directory] = previous unless previous.empty?
-      directory = UI.select_directory(options)
-      return nil unless directory
-      Sketchup.write_default('CJ_Insolation', 'csv_directory', directory)
-      directory
-    end
+    def finish_calculation(job, cancelled: false, error: nil)
+      return unless @active_calculation.equal?(job)
 
-    def export_csv(calculations, batch, directory:)
-      raise IOError, 'Папка CSV недоступна' unless directory && File.directory?(directory)
-      identifier = batch.get_attribute('CJ_Insolation', 'batch_id')
-      path = File.join(directory, "insolation_#{Time.now.strftime('%Y%m%d_%H%M%S')}_#{identifier}.csv")
-      File.binwrite(path, ("\uFEFF" + csv_report(calculations, batch)).encode('UTF-8'))
-      @last_csv_path = path
-      log("CSV: #{path}")
-      path
-    end
-
-    def run_from_points(points, mode: :cones, csv_directory: nil)
-      csv_directory ||= choose_csv_directory
-      return nil unless csv_directory
-      model = Sketchup.active_model
-      operation_started = false
-      model.start_operation('CJ Инсоляция: несколько точек', true)
-      operation_started = true
-      calculations = calculate_points(model, points)
-      batch = build_batch(model, calculations, mode: mode)
-      if mode == :lines
-        model.rendering_options['EdgeColorMode'] = 0
-        model.rendering_options['DisplayColorByLayer'] = false
-      end
-      if mode == :surface
-        model.rendering_options['MaterialTransparency'] = true
-      end
+      @active_calculation = nil
+      UI.stop_timer(job[:timer]) if job[:timer]
       begin
-        csv_path = export_csv(calculations, batch, directory: csv_directory)
-        batch.set_attribute('CJ_Insolation', 'csv_path', csv_path)
-      rescue SystemCallError, IOError => csv_error
-        UI.messagebox("Расчёт готов, но CSV не сохранён: #{csv_error.message}")
+        restore_calculation_visibility(job)
+        if cancelled || error
+          job[:model].abort_operation if job[:operation_started]
+          job[:operation_started] = false
+          Sketchup.set_status_text(cancelled ? 'Расчёт отменён; частичные результаты удалены.' : 'Расчёт прерван из-за ошибки.', SB_PROMPT)
+          UI.messagebox("Не удалось выполнить расчёт: #{error.message}") if error
+        else
+          batch = build_batch(job[:model], job[:calculations], mode: job[:mode])
+          job[:model].rendering_options['EdgeColorMode'] = 0 if job[:mode] == :lines
+          job[:model].rendering_options['DisplayColorByLayer'] = false if job[:mode] == :lines
+          job[:model].rendering_options['MaterialTransparency'] = true if job[:mode] == :surface
+          job[:model].commit_operation if job[:operation_started]
+          job[:operation_started] = false
+          job[:model].active_view.invalidate
+          log("Done: #{job[:points].length} points")
+          Sketchup.set_status_text("Готово: #{job[:points].length} точек.", SB_PROMPT)
+        end
+      rescue => finish_error
+        job[:model].abort_operation if job[:operation_started]
+        job[:operation_started] = false
+        log("ERROR: #{finish_error.class}: #{finish_error.message}")
+        UI.messagebox("Не удалось завершить расчёт: #{finish_error.message}")
+      ensure
+        job[:dialog].close if job[:dialog].visible?
       end
-      model.commit_operation
-      operation_started = false
-      model.active_view.invalidate
-      log("Done: #{points.length} points")
-      Sketchup.set_status_text("Готово: #{points.length} точек. CSV: #{csv_path || 'не сохранён'}", SB_PROMPT)
-      batch
+    end
+
+    def process_calculation_chunk(job)
+      return unless @active_calculation.equal?(job)
+      return finish_calculation(job, cancelled: true) if job[:cancelled]
+
+      vectors = job[:vectors]
+      points = job[:points]
+      processed = 0
+      while processed < CALCULATION_RAYS_PER_TICK && job[:point_index] < points.length
+        point_index = job[:point_index]
+        ray_index = job[:ray_index]
+        origin = points[point_index]
+        direction = vectors[ray_index]
+        hit = raycast_world(job[:model], origin, direction)
+        job[:calculations][point_index][:results] << {
+          i: ray_index, dir: direction, hit_dist: hit && hit[1], hit_pt: hit && hit[0]
+        }
+        ray_index += 1
+        if ray_index >= vectors.length
+          job[:point_index] += 1
+          job[:ray_index] = 0
+        else
+          job[:ray_index] = ray_index
+        end
+        processed += 1
+      end
+
+      done = [job[:point_index] * vectors.length + job[:ray_index], job[:total_rays]].min
+      job[:dialog].execute_script("updateProgress(#{done},#{job[:total_rays]})")
+      Sketchup.set_status_text("Инсоляция: #{done}/#{job[:total_rays]} лучей", SB_PROMPT)
+      if done >= job[:total_rays]
+        finish_calculation(job)
+      else
+        job[:timer] = UI.start_timer(0.01, false) { process_calculation_chunk(job) }
+      end
     rescue => error
-      model.abort_operation if operation_started
-      log("ERROR: #{error.class}: #{error.message}")
-      UI.messagebox("Не удалось выполнить расчёт: #{error.message}")
+      finish_calculation(job, error: error)
+    end
+
+    def run_from_points(points, mode: :lines, window_planes: nil)
+      return nil if @active_calculation
+      raise ArgumentError, 'Нет выбранных точек' if points.empty?
+      raise ArgumentError, 'Неизвестный режим отображения' unless [:lines, :surface, :summary].include?(mode)
+      model = Sketchup.active_model
+      vectors = ray_vectors
+      raise ArgumentError, 'Список векторов пуст' if vectors.empty?
+
+      dialog = progress_dialog
+      job = {
+        model: model, points: points.map(&:clone), mode: mode,
+        vectors: vectors,
+        calculations: points.each_with_index.map { |point, i| { origin: point.clone, results: [], window_plane: window_planes && window_planes[i] } },
+        point_index: 0, ray_index: 0, total_rays: points.length * vectors.length,
+        hidden_states: result_groups(model).map { |group| [group, group.hidden?] },
+        dialog: dialog, timer: nil, operation_started: false, cancelled: false
+      }
+      @active_calculation = job
+      dialog.add_action_callback('cancel_calculation') do |_context|
+        current = @active_calculation
+        current[:cancelled] = true if current
+      end
+      dialog.set_on_closed do
+        current = @active_calculation
+        current[:cancelled] = true if current && current[:dialog].equal?(dialog)
+      end
+      model.start_operation('CJ Инсоляция: несколько точек', true)
+      job[:operation_started] = true
+      job[:hidden_states].each { |group, _hidden| group.hidden = true }
+      dialog.show
+      process_calculation_chunk(job)
+      job
+    rescue => error
+      if job
+        finish_calculation(job, error: error)
+      else
+        log("ERROR: #{error.class}: #{error.message}")
+        UI.messagebox("Не удалось запустить расчёт: #{error.message}")
+      end
       nil
     end
 
@@ -1148,9 +980,8 @@ module CJ
     end
 
     class PickPointTool
-      def initialize(mode = :cones, csv_directory = nil)
+      def initialize(mode = :lines)
         @mode = mode
-        @csv_directory = csv_directory
         @ip = Sketchup::InputPoint.new
         @points = []
       end
@@ -1192,7 +1023,7 @@ module CJ
         points = @points.map(&:clone)
         @points.clear
         view.model.select_tool(nil)
-        CJ::RayTubesUp.run_from_points(points, mode: @mode, csv_directory: @csv_directory)
+        CJ::RayTubesUp.run_from_points(points, mode: @mode)
       end
 
       def onLButtonDown(_flags, x, y, view)
@@ -1231,43 +1062,51 @@ module CJ
       end
     end
 
-    def activate_pick_tool
+    def activate_pick_tool(preset_points = nil, expected_model = nil, context_note = nil, window_planes: nil)
+      expected_model ||= Sketchup.active_model if preset_points
       if @display_dialog && @display_dialog.visible?
         @display_dialog.bring_to_front
         return
       end
       dialog = UI::HtmlDialog.new(dialog_title: 'CJ — вид результата',
                                   preferences_key: 'CJ_DisplayMode_v1',
-                                  width: 450, height: 460,
+                                  width: 490, height: 550,
                                   resizable: true, scrollable: true,
                                   style: UI::HtmlDialog::STYLE_DIALOG)
       dialog.set_html(<<~HTML)
         <!doctype html><html lang="ru"><head><meta charset="utf-8">
         <style>
         * { box-sizing: border-box; }
-        body { margin: 0; padding: 20px; font: 14px 'Segoe UI', Arial, sans-serif; background: #f5f6f8; color: #202832; }
-        h1 { font-size: 18px; margin: 0 0 6px; }
+        body { margin: 0; padding: 20px; font: 14px 'Segoe UI', Arial, sans-serif; background: #f3f6fa; color: #192e43; }
+        h1 { font-size: 23px; margin: 0 0 12px; padding: 20px; border-radius: 14px; background: #192e43; color: #ffd36a; }
         p { margin: 0 0 14px; color: #526171; }
-        button { display: block; width: 100%; text-align: left; padding: 10px 14px; margin: 8px 0; border: 1px solid #c5cdd6; border-radius: 7px; background: white; color: #202832; font: inherit; cursor: pointer; }
-        button:hover, button:focus { border-color: #2475c8; background: #eef6ff; outline: none; }
+        button { display: block; width: 100%; text-align: left; padding: 16px 18px; margin: 10px 0; border: 1px solid #dce5ee; border-radius: 12px; background: white; color: #202832; font: inherit; cursor: pointer; }
+        button:hover, button:focus { border-color: #d6a530; background: #fff8e4; outline: none; }
         strong { display: block; margin-bottom: 2px; }
         small { font-size: 12px; color: #526171; }
         </style></head><body>
         <h1>Как показать результат?</h1>
         <p>Расчёт одинаковый во всех режимах.</p>
-        <button onclick="sketchup.choose_mode('cones')"><strong>Конусы</strong><small>Объёмные лучи. Дольше строятся.</small></button>
+        <p>#{context_note.to_s.gsub('&', '&amp;').gsub('<', '&lt;').gsub('>', '&gt;')}</p>
         <button autofocus onclick="sketchup.choose_mode('lines')"><strong>Линии</strong><small>Быстрое отображение лучей.</small></button>
         <button onclick="sketchup.choose_mode('surface')"><strong>Поверхность</strong><small>Зелёный и красный веер между соседними лучами.</small></button>
         <button onclick="sketchup.choose_mode('summary')"><strong>Итоги</strong><small>Только подписи, без лучей. Для многих точек.</small></button>
         </body></html>
       HTML
       dialog.add_action_callback('choose_mode') do |_context, choice|
-        mode = { 'cones' => :cones, 'lines' => :lines, 'surface' => :surface, 'summary' => :summary }[choice]
+        mode = { 'lines' => :lines, 'surface' => :surface, 'summary' => :summary }[choice]
         next unless mode
         dialog.close
-        directory = choose_csv_directory
-        next unless directory
-        Sketchup.active_model.select_tool(PickPointTool.new(mode, directory))
+        if preset_points && (!Sketchup.active_model.equal?(expected_model) || expected_model.active_path)
+          UI.messagebox('Модель или контекст изменились. Вернитесь к модели, в которой выбирали окна.')
+          next
+        end
+        if preset_points
+          next unless Sketchup.active_model.equal?(expected_model) && !expected_model.active_path
+          run_from_points(preset_points, mode: mode, window_planes: window_planes)
+        else
+          Sketchup.active_model.select_tool(PickPointTool.new(mode))
+        end
       end
       @display_dialog = dialog
       dialog.show
@@ -1277,7 +1116,7 @@ module CJ
       cmd = UI::Command.new(cmd_name) do
         CJ::RayTubesUp.activate_pick_tool
       end
-      cmd.small_icon = File.join(__dir__, 'icons', 'insolation.png') if File.exist?(File.join(__dir__, 'icons', 'insolation.png'))
+      cmd.small_icon = File.join(__dir__, 'icons', 'insolation.svg')
       cmd.large_icon = cmd.small_icon unless cmd.small_icon.empty?
 
       cmd.tooltip = cmd_name
@@ -1292,5 +1131,41 @@ module CJ
 
       CJ::RAY_TUBES_UP_UI_LOADED = true
     end
+
+    # Developer-only bridge control: the tooling folder is absent from the user RBZ.
+    bridge_file = File.expand_path('../tooling/sketchup_bridge.rb', __dir__)
+    bridge_icon = File.expand_path('../tooling/icons/cj_bridge.svg', __dir__)
+    if File.file?(bridge_file) && defined?(CJBridge) && (!CJBridge.respond_to?(:source_stamp) || CJBridge.source_stamp != File.mtime(bridge_file).to_f)
+      RubyVM::InstructionSequence.compile_file(bridge_file)
+      UI.start_timer(1, false) { Kernel.load(bridge_file) }
+    end
+    unless defined?(CJ::RAY_BRIDGE_UI_LOADED) || !File.file?(bridge_file)
+      bridge_cmd = UI::Command.new('Подключить CJ Bridge') do
+        CJ::RayTubesUp.connect_bridge
+      end
+      bridge_cmd.small_icon = bridge_icon if File.file?(bridge_icon)
+      bridge_cmd.large_icon = bridge_icon if File.file?(bridge_icon)
+      bridge_cmd.tooltip = 'Подключить мост Codex к текущему окну SketchUp'
+      bridge_cmd.status_bar_text = 'Запустить CJ Bridge для этого экземпляра SketchUp'
+      bridge_cmd.menu_text = 'Подключить CJ Bridge'
+
+      toolbar = UI.toolbar(plugin_menu)
+      toolbar.add_item(bridge_cmd)
+      toolbar.show
+      UI.menu('Plugins').add_submenu(plugin_menu).add_item(bridge_cmd)
+      CJ::RAY_BRIDGE_UI_LOADED = true
+    end
   end
+end
+
+Kernel.load(File.join(__dir__, 'result_style.rb'))
+Kernel.load(File.join(__dir__, 'window_placement.rb'))
+Kernel.load(File.join(__dir__, 'window_components.rb'))
+Kernel.load(File.join(__dir__, 'updates.rb'))
+# Also refresh existing command icons when developing through the bridge.
+UI.toolbar('CJ').each do |command|
+  icon = {CJ::RayTubesUp.cmd_name => 'insolation', 'Инсоляция — точка по окну' => 'window_point', 'Вставить окно CJ' => 'window_insert', 'Рассчитать окна CJ' => 'windows_batch'}[command.menu_text]
+  next unless icon
+  command.small_icon = File.join(__dir__, 'icons', "#{icon}.svg")
+  command.large_icon = command.small_icon
 end

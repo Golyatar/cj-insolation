@@ -1,14 +1,29 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('status', 'reload', 'check', 'raycast', 'geometry_test', 'stop')]
+    [ValidateSet('instances', 'status', 'reload', 'check', 'raycast', 'geometry_test', 'inspect', 'entities', 'selection', 'select', 'create', 'edit', 'move', 'delete', 'save', 'stop')]
     [string]$Command,
+    [string]$InstanceId,
     [string]$ArgsJson = '{}',
     [ValidateRange(1, 60)]
     [int]$TimeoutSeconds = 30
 )
 
 $ErrorActionPreference = 'Stop'
-$bridgeQueue = Join-Path $PSScriptRoot 'runtime'
+$bridgeQueue = Join-Path $PSScriptRoot 'runtime\instances'
+if ($Command -eq 'instances') {
+    $instances = @(Get-ChildItem -LiteralPath $bridgeQueue -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $path = Join-Path $_.FullName 'session.json'
+        if (Test-Path -LiteralPath $path) {
+            Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+    })
+    if ($instances.Count -eq 0) { '[]' } else { $instances | ConvertTo-Json -Depth 8 }
+    return
+}
+if (-not $InstanceId -or $InstanceId -notmatch '^[0-9a-fA-F-]{36}$') {
+    throw 'Pass -InstanceId returned by the instances command.'
+}
+$bridgeQueue = Join-Path $bridgeQueue $InstanceId
 $sessionPath = Join-Path $bridgeQueue 'session.json'
 if (-not (Test-Path -LiteralPath $sessionPath)) {
     throw 'Bridge is not loaded. See tooling/README.md.'

@@ -9,10 +9,24 @@ module CJDevelopment
   def self.reload
     # Compile before loading so a syntax error does not partially redefine the plugin.
     RubyVM::InstructionSequence.compile_file(SOURCE)
+    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_placement.rb'))
+    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_components.rb'))
+    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'result_style.rb'))
+    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'updates.rb'))
     previous_verbose = $VERBOSE
     begin
       $VERBOSE = nil # Existing constants are expected during development reloads.
+      if defined?(CJ::RayTubesUp)
+        plugin = CJ::RayTubesUp
+        [:add_cone_group, :csv_report, :choose_csv_directory, :export_csv].each do |name|
+          plugin.send(:remove_method, name) if plugin.instance_methods(false).include?(name)
+        end
+        [:DEFAULT_RADIUS_MM, :CIRCLE_SEGMENTS, :CONE_HALF_ANGLE_DEG].each do |name|
+          plugin.send(:remove_const, name) if plugin.const_defined?(name, false)
+        end
+      end
       Kernel.load(SOURCE)
+      CJ::WindowComponents.remove_old_markers(Sketchup.active_model) if defined?(CJ::WindowComponents)
       CJ::RayTubesUp.remove_instance_variable(:@ray_vectors) if CJ::RayTubesUp.instance_variable_defined?(:@ray_vectors)
     ensure
       $VERBOSE = previous_verbose
@@ -23,6 +37,12 @@ module CJDevelopment
 
   def self.check
     checks = []
+    Kernel.load(File.join(ROOT, 'dev', 'update_checks.rb'))
+    checks.concat(CJUpdateChecks.run)
+    if defined?(CJ::WindowPlacement)
+      Kernel.load(File.join(__dir__, 'window_checks.rb'))
+      checks.concat(CJWindowChecks.run)
+    end
     vectors = CJ::RayTubesUp.ray_vectors
     checks << { name: 'vectors_present', passed: !vectors.empty?, count: vectors.length }
     checks << { name: 'normalized_vectors', passed: vectors.all? { |v| (v.length - 1.0).abs < 1e-9 } }
@@ -42,12 +62,15 @@ module CJDevelopment
     # API probe only: does not draw, change visibility, or save the user's model.
     probe = CJ::RayTubesUp.raycast_world(model, Geom::Point3d.new(0, 0, 1000.m), Geom::Vector3d.new(0, 0, 1))
     checks << { name: 'raytest_api', passed: probe.nil? || (probe[0].is_a?(Geom::Point3d) && probe[1] >= 0) }
+    toolbar = UI.toolbar('CJ')
+    bridge_button = toolbar.any? { |command| command.menu_text == 'Подключить CJ Bridge' }
+    checks << { name: 'bridge_button_registered', passed: bridge_button }
     report = {
       checked_at: Time.now.iso8601,
       sketchup_version: Sketchup.version,
       ruby_version: RUBY_VERSION,
       source: SOURCE,
-      scope: 'Load, vector normalization, clear streaks, read-only raytest API probe. No geometry regression tests.',
+      scope: 'Load, example window placement with rotation, vectors, intervals and read-only raytest. No model geometry edits.',
       passed: checks.all? { |c| c[:passed] },
       checks: checks
     }

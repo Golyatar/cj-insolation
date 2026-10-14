@@ -15,14 +15,44 @@ import uuid
 VERSIONS = ('2025-06-18', '2025-03-26', '2024-11-05')
 EMPTY = {'type': 'object', 'properties': {}, 'additionalProperties': False}
 TRIPLE = {'type': 'array', 'items': {'type': 'number'}, 'minItems': 3, 'maxItems': 3}
+INSTANCE = {'type': 'string', 'minLength': 36, 'maxLength': 36}
+def schema(properties, required=()):
+    props = {'instance_id': INSTANCE, 'expected_model_token': {'type': 'string'}, **properties}
+    return {'type': 'object', 'properties': props,
+            'required': ['instance_id', *required], 'additionalProperties': False}
+
 TOOLS = [
-    ('sketchup_status', 'status', 'Read SketchUp version, bridge session and current model entity count.', EMPTY, True),
-    ('sketchup_reload_plugin', 'reload', 'Reload trusted project source src/cj.rb in the current SketchUp process. Does not save the model.', EMPTY, False),
-    ('sketchup_run_checks', 'check', 'Run basic vector and interval checks and write a report. May load the project plugin on first use.', EMPTY, False),
-    ('sketchup_run_geometry_tests', 'geometry_test', 'Run temporary wall/cone tests and roll back the created geometry. Use an idle test model outside group edit mode.', EMPTY, False),
+    ('sketchup_capture_model', 'snapshot', 'Capture exact world geometry in mm to JSON, including loops, edges, instance paths and transforms. Returns artifact path and root summary; read file for detail. Selection capture respects edit context. Check truncated flag.',
+     schema({'selection_only': {'type': 'boolean'}, 'include_geometry': {'type': 'boolean'},
+             'limit': {'type': 'integer', 'minimum': 1, 'maximum': 10000}, 'depth': {'type': 'integer', 'minimum': 0, 'maximum': 32}}), True),
+    ('sketchup_capture_view', 'view', 'Write current model viewport to a PNG artifact without changing the camera.', schema({}), True),
+    ('sketchup_export_model', 'export', 'Export the entire target model as DAE or OBJ to a project runtime artifact. Does not save the SKP.', schema({'format': {'type': 'string', 'enum': ['dae', 'obj']}}), True),
+    ('sketchup_list_instances', 'instances', 'List running SketchUp instances and their model paths.', EMPTY, True),
+    ('sketchup_status', 'status', 'Read SketchUp version, bridge session, model path and root entity count.', schema({}), True),
+    ('sketchup_inspect_model', 'inspect', 'Read model units, counts, tags, materials, scenes and save state.', schema({}), True),
+    ('sketchup_list_entities', 'entities', 'Search model entities by type, name or tag; returns persistent IDs.',
+     schema({'type': {'type': 'string'}, 'name_contains': {'type': 'string'}, 'tag': {'type': 'string'},
+             'limit': {'type': 'integer', 'minimum': 1, 'maximum': 1000}}), True),
+    ('sketchup_get_selection', 'selection', 'Read the current selection in the target model.', schema({}), True),
+    ('sketchup_set_selection', 'select', 'Select entities by persistent ID in the target model.',
+     schema({'persistent_ids': {'type': 'array', 'items': {'type': 'integer'}, 'maxItems': 1000}}, ['persistent_ids']), False),
     ('sketchup_raycast', 'raycast', 'Read the first visible geometry intersection. Origin and result are in millimeters; direction is a nonzero vector.',
-     {'type': 'object', 'properties': {'origin_mm': TRIPLE, 'direction': TRIPLE},
-      'required': ['origin_mm', 'direction'], 'additionalProperties': False}, True),
+     schema({'origin_mm': TRIPLE, 'direction': TRIPLE}, ['origin_mm', 'direction']), True),
+    ('sketchup_create_geometry', 'create', 'Create a line or face inside a new group. Coordinates are in millimeters.',
+     schema({'kind': {'type': 'string', 'enum': ['line', 'face']},
+             'points_mm': {'type': 'array', 'items': TRIPLE, 'minItems': 2, 'maxItems': 500},
+             'name': {'type': 'string'}, 'tag': {'type': 'string'}}, ['kind', 'points_mm']), False),
+    ('sketchup_edit_entity', 'edit', 'Change supported entity properties: name, hidden, tag, material.',
+     schema({'persistent_id': {'type': 'integer'}, 'properties': {'type': 'object'}}, ['persistent_id', 'properties']), False),
+    ('sketchup_move_entities', 'move', 'Move entities by an offset in millimeters.',
+     schema({'persistent_ids': {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 1, 'maxItems': 1000},
+             'offset_mm': TRIPLE}, ['persistent_ids', 'offset_mm']), False),
+    ('sketchup_delete_entities', 'delete', 'Delete entities by persistent ID. This is undoable in SketchUp.',
+     schema({'persistent_ids': {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 1, 'maxItems': 1000}}, ['persistent_ids']), False),
+    ('sketchup_save_model', 'save', 'Save the currently open model to its existing file path.', schema({}), False),
+    ('sketchup_reload_plugin', 'reload', 'Reload trusted project source src/cj.rb in the target SketchUp process. Does not save the model.', schema({}), False),
+    ('sketchup_run_checks', 'check', 'Run basic vector and interval checks in the target SketchUp process.', schema({}), False),
+    ('sketchup_run_geometry_tests', 'geometry_test', 'Run temporary wall/occluder tests and roll back the created geometry. Use an idle test model outside group edit mode.', schema({}), False),
 ]
 
 
@@ -32,14 +62,73 @@ class BridgeError(Exception):
         self.details = details
 
 
+def validate_value(value, spec, path='argument'):
+    kind = spec.get('type')
+    valid = {
+        'string': lambda v: isinstance(v, str),
+        'integer': lambda v: type(v) is int,
+        'number': lambda v: type(v) in (int, float) and math.isfinite(v),
+        'boolean': lambda v: type(v) is bool,
+        'array': lambda v: isinstance(v, list),
+        'object': lambda v: isinstance(v, dict),
+    }.get(kind, lambda _v: True)
+    if not valid(value):
+        return f'{path} must be {kind}'
+    if kind == 'array':
+        if len(value) < spec.get('minItems', 0) or len(value) > spec.get('maxItems', float('inf')):
+            return f'{path} has an invalid number of items'
+        if 'items' in spec:
+            for index, item in enumerate(value):
+                error = validate_value(item, spec['items'], f'{path}[{index}]')
+                if error:
+                    return error
+    if kind == 'object':
+        props = spec.get('properties', {})
+        if spec.get('additionalProperties') is False and set(value) - set(props):
+            return f'{path} has unsupported properties'
+        if any(key not in value for key in spec.get('required', [])):
+            return f'{path} is missing required properties'
+        for key, item in value.items():
+            if key in props:
+                error = validate_value(item, props[key], f'{path}.{key}')
+                if error:
+                    return error
+    if kind in ('integer', 'number'):
+        if value < spec.get('minimum', float('-inf')) or value > spec.get('maximum', float('inf')):
+            return f'{path} is outside the permitted range'
+    if kind == 'string' and (len(value) < spec.get('minLength', 0) or len(value) > spec.get('maxLength', float('inf'))):
+        return f'{path} has an invalid length'
+    if 'enum' in spec and value not in spec['enum']:
+        return f'{path} has an unsupported value'
+    return None
+
+
 class Bridge:
     def __init__(self, root: Path, timeout: float = 30):
         self.root = root.resolve()
         self.queue = self.root / 'tooling' / 'runtime'
         self.timeout = timeout
 
+    def instances(self):
+        instances = []
+        for session_path in (self.queue / 'instances').glob('*/session.json'):
+            try:
+                session = json.loads(session_path.read_text(encoding='utf-8'))
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(session['updated_at'].replace('Z', '+00:00'))).total_seconds()
+                session['instance_id'] = session['session_id']
+                session['available'] = bool(session.get('running')) and age <= 10
+                session['heartbeat_age_seconds'] = max(0, round(age, 1))
+                instances.append(session)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return sorted(instances, key=lambda item: (item.get('model_path', '').casefold(), item.get('pid', 0)))
+
     def request(self, command: str, arguments: dict, cancelled: threading.Event):
-        session_path = self.queue / 'session.json'
+        instance_id = arguments.get('instance_id')
+        if not isinstance(instance_id, str) or len(instance_id) != 36 or any(c not in '0123456789abcdef-' for c in instance_id.lower()):
+            raise BridgeError('Choose an instance_id returned by sketchup_list_instances.')
+        instance_queue = self.queue / 'instances' / instance_id
+        session_path = instance_queue / 'session.json'
         try:
             session = json.loads(session_path.read_text(encoding='utf-8'))
         except (OSError, ValueError) as error:
@@ -52,12 +141,12 @@ class Bridge:
         if command not in session.get('commands', []):
             raise BridgeError(f'Bridge does not support command: {command}')
         request_id = str(uuid.uuid4())
-        path = self.queue / f'{request_id}.request.json'
-        response_path = self.queue / f'{request_id}.response.json'
+        path = instance_queue / f'{request_id}.request.json'
+        response_path = instance_queue / f'{request_id}.response.json'
         request = {
             'protocol': 1, 'id': request_id, 'session_id': session['session_id'],
             'expires_at': (datetime.now(timezone.utc) + timedelta(seconds=self.timeout)).isoformat(),
-            'command': command, 'args': arguments,
+            'command': command, 'args': {key: value for key, value in arguments.items() if key != 'instance_id'},
         }
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding='utf-8')
@@ -118,20 +207,33 @@ class Server:
             if not isinstance(arguments, dict):
                 self.error(request_id, -32602, 'Arguments must be an object')
                 return
+            schema_spec = tool[3]
+            properties = schema_spec.get('properties', {})
+            required = schema_spec.get('required', [])
+            if not isinstance(arguments, dict) or set(arguments) - set(properties) or any(key not in arguments for key in required):
+                self.error(request_id, -32602, 'Arguments do not match this tool schema')
+                return
+            validation_error = validate_value(arguments, schema_spec, 'arguments')
+            if validation_error:
+                self.error(request_id, -32602, validation_error)
+                return
+            if tool[1] == 'instances':
+                result = self.bridge.instances()
+                self.result(request_id, {'content': [{'type': 'text', 'text': json.dumps(result, ensure_ascii=False)}],
+                                         'structuredContent': {'instances': result}, 'isError': False})
+                return
+            if 'instance_id' not in arguments:
+                self.error(request_id, -32602, 'instance_id is required; call sketchup_list_instances first')
+                return
             if tool[1] == 'raycast':
-                if set(arguments) != {'origin_mm', 'direction'}:
-                    self.error(request_id, -32602, 'Expected origin_mm and direction only')
-                    return
-                for value in arguments.values():
+                for key in ('origin_mm', 'direction'):
+                    value = arguments.get(key)
                     if not isinstance(value, list) or len(value) != 3 or not all(type(n) in (int, float) and math.isfinite(n) for n in value):
-                        self.error(request_id, -32602, 'Expected triples of finite numbers')
+                        self.error(request_id, -32602, f'{key} must contain three finite numbers')
                         return
                 if all(n == 0 for n in arguments['direction']):
                     self.error(request_id, -32602, 'Direction must not be zero')
                     return
-            elif arguments:
-                self.error(request_id, -32602, 'This tool accepts no arguments')
-                return
             if cancelled.is_set():
                 return
             response = self.bridge.request(tool[1], arguments, cancelled)
@@ -183,8 +285,8 @@ class Server:
             self.result(request_id, {
                 'protocolVersion': version if version in VERSIONS else VERSIONS[0],
                 'capabilities': {'tools': {'listChanged': False}},
-                'serverInfo': {'name': 'sketchup-cj', 'version': '0.1.0'},
-                'instructions': 'Uses the local CJ Ruby bridge. SketchUp must be running with tooling/sketchup_bridge.rb loaded. Use geometry tests on an idle test model.',
+                'serverInfo': {'name': 'sketchup-cj', 'version': '0.2.0'},
+                'instructions': 'Call sketchup_list_instances first. Pass the selected instance_id to every SketchUp tool. Model edits run in one undoable SketchUp operation.',
             })
         elif method == 'ping':
             self.result(request_id, {})
@@ -193,8 +295,8 @@ class Server:
         elif method == 'tools/list':
             self.result(request_id, {'tools': [
                 {'name': name, 'description': description, 'inputSchema': schema,
-                 'annotations': {'readOnlyHint': readonly, 'destructiveHint': False,
-                                 'idempotentHint': command in ('status', 'raycast'), 'openWorldHint': False}}
+                 'annotations': {'readOnlyHint': readonly, 'destructiveHint': command in ('delete', 'save'),
+                                 'idempotentHint': command in ('instances', 'status', 'inspect', 'entities', 'selection', 'raycast'), 'openWorldHint': False}}
                 for name, command, description, schema, readonly in TOOLS
             ]})
         elif method == 'tools/call':
