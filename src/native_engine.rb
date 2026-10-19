@@ -1,16 +1,22 @@
 # frozen_string_literal: true
 require 'tmpdir'
 require 'fileutils'
+require 'digest'
 
 module CJ
   module NativeEngine
     extend self
     class Unsupported < StandardError; end
     attr_reader :last_metrics
+    APPROVED_SHA256 = 'b6a02b00a3cb35cd93976be0d070683f275c6b8e61b98c474dd75a97b3c0e376'.freeze unless const_defined?(:APPROVED_SHA256, false)
 
     def executable
       packaged = File.join(__dir__, 'bin', 'cj_engine.exe')
-      File.file?(packaged) ? packaged : File.expand_path('../native/build/cj_engine.exe', __dir__)
+      File.file?(packaged) ? packaged : File.expand_path('../native/stable/cj_engine.exe', __dir__)
+    end
+
+    def approved?(path = executable)
+      File.file?(path) && Digest::SHA256.file(path).hexdigest == APPROVED_SHA256
     end
 
     def write_input(path, model, points, vectors)
@@ -75,8 +81,9 @@ module CJ
 
     def start(job)
       return false unless Settings.values['engine'] == 'cpp'
-      unless File.file?(executable)
-        RayTubesUp.log('C++ движок не найден; расчёт выполняется в SketchUp.')
+      worker = executable
+      unless approved?(worker)
+        RayTubesUp.log('Сохранённый рабочий C++ движок отсутствует или изменён; расчёт выполняется в SketchUp.')
         return false
       end
       directory = Dir.mktmpdir('cj-engine-')
@@ -84,7 +91,7 @@ module CJ
       triangles = write_input(File.join(directory, 'input.bin'), job[:model], job[:points], job[:vectors])
       job[:native][:triangles] = triangles
       job[:native][:export_ms] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - job[:native][:started]) * 1000
-      job[:native][:pid] = Process.spawn(executable, File.join(directory, 'input.bin'), File.join(directory, 'output.bin'),
+      job[:native][:pid] = Process.spawn(worker, File.join(directory, 'input.bin'), File.join(directory, 'output.bin'),
                                           out: File::NULL, err: File.join(directory, 'error.txt'))
       Sketchup.set_status_text("CJ C++: #{job[:points].length} точек, #{triangles} треугольников")
       job[:timer] = UI.start_timer(0.03, false) { poll(job) }

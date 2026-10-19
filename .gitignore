@@ -8,3 +8,4 @@ dist/
 tooling/mcp/config.example.toml
 
 native/build/
+native/stable/*.exe

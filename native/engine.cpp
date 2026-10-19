@@ -70,20 +70,66 @@ public:
 };
 template<class T>T read(std::istream& f){T value{};if(!f.read(reinterpret_cast<char*>(&value),sizeof(value)))throw std::runtime_error("Truncated input");return value;}
 V vector(std::istream& f){V v=read<V>(f);if(!std::isfinite(v.x)||!std::isfinite(v.y)||!std::isfinite(v.z))throw std::runtime_error("Non-finite coordinate");return v;}
+void validate_counts(uint32_t np,uint32_t nd){
+    if(np>1000000||nd>100000||nd==0||np==0||uint64_t(np)*nd>100000000)throw std::runtime_error("Invalid counts");
+}
 int wmain(int argc,wchar_t**argv){
     try {
         if(argc!=3)throw std::runtime_error("Usage: cj_engine input.bin output.bin");
         std::ifstream input(std::filesystem::path(argv[1]),std::ios::binary);
-        char magic[8];if(!input.read(magic,8)||std::string(magic,8)!="CJIN0001")throw std::runtime_error("Invalid protocol");
-        uint32_t nt=read<uint32_t>(input),np=read<uint32_t>(input),nd=read<uint32_t>(input);
-        if(nt>10000000||np>1000000||nd>100000||nd==0||np==0||uint64_t(np)*nd>100000000)throw std::runtime_error("Invalid counts");
-        auto expected=uint64_t(20)+uint64_t(nt)*72+(uint64_t(np)+nd)*24;
-        if(std::filesystem::file_size(std::filesystem::path(argv[1]))!=expected)throw std::runtime_error("Invalid input size");
-        std::vector<Triangle> triangles;triangles.reserve(nt);
-        for(uint32_t i=0;i<nt;++i)triangles.push_back({vector(input),vector(input),vector(input)});
+        const auto input_size=std::filesystem::file_size(std::filesystem::path(argv[1]));
+        char magic[8];if(!input.read(magic,8))throw std::runtime_error("Invalid protocol");
+        std::string protocol(magic,8);
+        uint32_t np=0,nd=0;
+        std::vector<Triangle> triangles;
+        if(protocol=="CJIN0001") {
+            uint32_t nt=read<uint32_t>(input);np=read<uint32_t>(input);nd=read<uint32_t>(input);
+            validate_counts(np,nd);
+            if(nt>10000000)throw std::runtime_error("Too many triangles");
+            auto expected=uint64_t(20)+uint64_t(nt)*72+(uint64_t(np)+nd)*24;
+            if(input_size!=expected)throw std::runtime_error("Invalid input size");
+            triangles.reserve(nt);
+            for(uint32_t i=0;i<nt;++i)triangles.push_back({vector(input),vector(input),vector(input)});
+        } else if(protocol=="CJIN0002") {
+            uint32_t nm=read<uint32_t>(input),ni=read<uint32_t>(input);np=read<uint32_t>(input);nd=read<uint32_t>(input);
+            validate_counts(np,nd);
+            if(nm>1000000||ni>10000000)throw std::runtime_error("Invalid scene counts");
+            std::vector<std::vector<Triangle>> meshes;
+            uint64_t unique_triangles=0;
+            for(uint32_t m=0;m<nm;++m){
+                uint32_t patches=read<uint32_t>(input);if(patches>10000000)throw std::runtime_error("Invalid patch count");
+                std::vector<Triangle> mesh;
+                for(uint32_t p=0;p<patches;++p){
+                    uint32_t nv=read<uint32_t>(input),nt=read<uint32_t>(input);
+                    if(nv>10000000||nt>10000000||mesh.size()+nt>10000000)throw std::runtime_error("Invalid mesh size");
+                    unique_triangles+=nt;
+                    if(unique_triangles>10000000)throw std::runtime_error("Too many unique triangles");
+                    const auto position=static_cast<uint64_t>(static_cast<std::streamoff>(input.tellg()));
+                    if(position>input_size||uint64_t(nv)*24+uint64_t(nt)*12>input_size-position)throw std::runtime_error("Truncated mesh");
+                    std::vector<V> vertices;vertices.reserve(nv);
+                    for(uint32_t v=0;v<nv;++v)vertices.push_back(vector(input));
+                    for(uint32_t t=0;t<nt;++t){
+                        uint32_t a=read<uint32_t>(input),b=read<uint32_t>(input),c=read<uint32_t>(input);
+                        if(a>=nv||b>=nv||c>=nv)throw std::runtime_error("Invalid vertex index");
+                        mesh.push_back({vertices[a],vertices[b],vertices[c]});
+                    }
+                }
+                meshes.push_back(std::move(mesh));
+            }
+            for(uint32_t i=0;i<ni;++i){
+                uint32_t mesh=read<uint32_t>(input);if(mesh>=meshes.size())throw std::runtime_error("Invalid mesh index");
+                double tr[16];for(double& v:tr){v=read<double>(input);if(!std::isfinite(v))throw std::runtime_error("Invalid matrix");}
+                if(tr[3]!=0||tr[7]!=0||tr[11]!=0||tr[15]!=1)throw std::runtime_error("Non-affine matrix");
+                if(triangles.size()+meshes[mesh].size()>10000000)throw std::runtime_error("Scene too large");
+                auto transform=[&](V p)->V{return {tr[0]*p.x+tr[4]*p.y+tr[8]*p.z+tr[12],tr[1]*p.x+tr[5]*p.y+tr[9]*p.z+tr[13],tr[2]*p.x+tr[6]*p.y+tr[10]*p.z+tr[14]};};
+                for(const auto&t:meshes[mesh])triangles.push_back({transform(t.a),transform(t.b),transform(t.c)});
+            }
+        } else throw std::runtime_error("Invalid protocol");
         std::vector<V> points,directions;
+        points.reserve(np);directions.reserve(nd);
         for(uint32_t i=0;i<np;++i)points.push_back(vector(input));
         for(uint32_t i=0;i<nd;++i){V d=vector(input);double n=std::sqrt(dot(d,d));if(n<1e-15)throw std::runtime_error("Zero direction");directions.push_back(d*(1/n));}
+        if(input.peek()!=std::char_traits<char>::eof())throw std::runtime_error("Trailing data");
         Scene scene(std::move(triangles));size_t count=size_t(np)*nd;
         std::vector<double> distances(count);std::atomic<size_t> cursor{0};
         unsigned workers=std::max(1u,std::min(16u,std::thread::hardware_concurrency()));

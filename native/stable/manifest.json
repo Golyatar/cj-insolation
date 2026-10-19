@@ -1,0 +1,8 @@
+{
+  "baseline_commit": "d1567fd5210e705baaeed625464030952a656897",
+  "executable": "cj_engine.exe",
+  "sha256": "b6a02b00a3cb35cd93976be0d070683f275c6b8e61b98c474dd75a97b3c0e376",
+  "size": 242176,
+  "protocol": "CJIN0001",
+  "source_sha256": "00ae8dde886d70369c896d7a373198081b28176df101261c0b44ad49b228d1ec"
+}

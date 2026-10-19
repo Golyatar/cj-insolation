@@ -1,12 +1,14 @@
 """Independent nearest-hit reference, protocol failures and parallel batch test."""
 import math
+import hashlib
 from pathlib import Path
 import random
 import struct
 import subprocess
 import tempfile
 
-ENGINE = Path(__file__).parent / 'build/cj_engine.exe'
+ENGINE = Path(__file__).parent / 'stable/cj_engine.exe'
+APPROVED_SHA256 = 'b6a02b00a3cb35cd93976be0d070683f275c6b8e61b98c474dd75a97b3c0e376'
 def sub(a,b): return tuple(x-y for x,y in zip(a,b))
 def dot(a,b): return sum(x*y for x,y in zip(a,b))
 def cross(a,b): return (a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
@@ -24,6 +26,8 @@ def reference(triangles,o,d):
     return -1 if math.isinf(best) else best
 
 def run():
+    if hashlib.sha256(ENGINE.read_bytes()).hexdigest() != APPROVED_SHA256:
+        raise RuntimeError('Stable engine changed; refusing to execute it.')
     rng=random.Random(823)
     triangles=[tuple(tuple(rng.uniform(-20,20) for _ in range(3)) for _ in range(3)) for _ in range(80)]
     points=[tuple(rng.uniform(-30,30) for _ in range(3)) for _ in range(30)]

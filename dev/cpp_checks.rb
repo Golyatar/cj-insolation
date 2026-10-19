@@ -9,6 +9,7 @@ module CJCppChecks
   def run
     @model = Sketchup.active_model
     raise 'Use an empty test model' unless @model.entities.length.zero?
+    raise 'Stable engine missing or changed' unless CJ::NativeEngine.approved?
     @directory = Dir.mktmpdir('cj-cpp-parity-')
     @model.start_operation('CJ C++ comparison fixture', true)
     d = @model.definitions.add('CJ_CPP_TEST_BLOCK')

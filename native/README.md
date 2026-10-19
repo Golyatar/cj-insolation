@@ -1,10 +1,12 @@
 # C++ CPU intersection worker
 
-Windows x64, C++17, MSVC. Build using `./native/build.ps1` in PowerShell with Visual Studio C++ Build Tools installed. Visual Studio is discovered via vswhere. The output is `native/build/cj_engine.exe`, statically linking the C runtime. No SketchUp SDK, external library or GPU driver is required. The Windows subsystem avoids opening a console when launched by SketchUp.
+Windows x64, C++17, MSVC. The saved working version is `native/stable/cj_engine.exe`; its source is `native/stable/engine.cpp`, with the baseline commit and SHA256 in `native/stable/manifest.json`. EXEs are local backups and are not committed to Git. The saved version uses protocol v1.
 
-Run `python native/test_engine.py`. Inside SketchUp, load `dev/cpp_checks.rb` and call `CJCppChecks.run` in an empty test model. This creates and removes a temporary fixture; results go to `reports/cpp_check.json`.
+Continue editing `native/engine.cpp`. `./native/build.ps1` builds only into `native/build/experimental/cj_engine.exe`. It never copies an EXE into stable, the plugin, or a release. The compiler/linker flags are unchanged; there are no third-party libraries. `./native/build.ps1 -SyntaxOnly` checks the source without generating or running an EXE. While the detection remains unresolved, use this syntax check and do not execute experimental workers. Do not disable antivirus or add exclusions.
 
-`python tooling/build_release.py` includes the EXE in `cj_insolation/bin/`. Rebuild the worker after editing `engine.cpp`; binaries are ignored by Git.
+Run `python native/test_engine.py` to test only the saved working EXE, after checking its pinned SHA256. Inside SketchUp, load `dev/cpp_checks.rb` and call `CJCppChecks.run` in an empty test model. This creates and removes a temporary fixture; results go to `reports/cpp_check.json`. These checks do not validate the experimental C++ source.
+
+`python tooling/build_release.py` includes only the saved, hash-checked EXE in `cj_insolation/bin/`. Missing or changed stable EXE stops packaging before writing a release. The plugin uses only its packaged worker, or `native/stable/cj_engine.exe` during development, and verifies the pinned SHA256 before launch. It never falls back to an experimental build. Updating the saved version requires a separate deliberate change; building source is not installation.
 
 ## Protocol v1
 
@@ -21,5 +23,9 @@ Ruby exports a fresh scene in the main thread. Nested transforms, visibility and
 Glued cutting components do not necessarily modify the host face mesh. These scenes and active sections with DisplaySectionCuts enabled fall back to SketchUp. Stored sections with cuts disabled do not block export. Boundary/self-contact tolerances need further real-model coverage; the current worker is a development implementation, not a claim of universal parity.
 
 Intersection work runs in a child process that never touches SketchUp API. The plugin polls completion, supports cancellation, removes temporary files and retains the existing display/Undo flow. There is no live tracking or scene cache.
+
+## Experimental source
+
+The current `native/engine.cpp` retains v1 and adds `CJIN0002`: uint32 mesh/instance/point/direction counts; indexed local mesh patches; mesh index plus 16 doubles per instance; origins and shared directions. Instance transforms are applied in C++. `dev/scene_export.rb` and `dev/scene_cache.rb` preserve the export optimization work and are not loaded or shipped by the plugin. Runtime continues using its working v1 exporter, compatible with the saved EXE. Experimental runtime tests remain pending; no performance claim is made for the latest source-only corrections.
 
 Visibility regression: load `dev/export_visibility_checks.rb` and run `CJExportVisibilityChecks.run`. It uses a temporary fixture rolled back within the current model, including nested hidden tag folders, hidden faces/instances/images and enabled/disabled section cuts.

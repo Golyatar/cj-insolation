@@ -13,6 +13,10 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.search(r"VERSION = '([0-9]+\.[0-9]+\.[0-9]+)'", (ROOT / 'src/version.rb').read_text(encoding='utf-8')).group(1)
+engine = ROOT / 'native/stable/cj_engine.exe'
+stable = json.loads((engine.parent / 'manifest.json').read_text(encoding='utf-8'))
+if not engine.is_file() or hashlib.sha256(engine.read_bytes()).hexdigest() != stable['sha256']:
+    raise RuntimeError('Saved stable worker is missing or changed; experimental builds are never packaged.')
 OUTPUT = ROOT / 'dist'
 OUTPUT.mkdir(exist_ok=True)
 icons = ROOT / 'src/icons'
@@ -28,9 +32,6 @@ with zipfile.ZipFile(rbz, 'w', zipfile.ZIP_DEFLATED) as archive:
     archive.write(ROOT / 'src/window_components.rb', 'cj_insolation/window_components.rb')
     for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'native_engine.rb']:
         archive.write(ROOT / 'src' / name, 'cj_insolation/' + name)
-    engine = ROOT / 'native/build/cj_engine.exe'
-    if not engine.is_file():
-        raise RuntimeError('Build the C++ worker first: ./native/build.ps1')
     archive.write(engine, 'cj_insolation/bin/cj_engine.exe')
     for icon in (ROOT / 'src/icons').glob('*'):
         archive.write(icon, 'cj_insolation/icons/' + icon.name)
@@ -48,6 +49,6 @@ with zipfile.ZipFile(source, 'w', zipfile.ZIP_DEFLATED) as archive:
         archive.write(ROOT / name, name)
     for folder in ['src', 'tooling', 'dev', 'native', 'reference']:
         for file in (ROOT / folder).rglob('*'):
-            if file.is_file() and not any(part in ('runtime', '__pycache__', 'build') for part in file.parts) and (file.suffix not in ('.pyc', '.csv', '.json') or file == ROOT / 'dev/window_examples.json') and file.name != 'config.example.toml':
+            if file.is_file() and not any(part in ('runtime', '__pycache__', 'build') for part in file.parts) and file.suffix not in ('.exe', '.dll', '.obj', '.rbz', '.zip') and (file.suffix not in ('.pyc', '.csv', '.json') or file in (ROOT / 'dev/window_examples.json', ROOT / 'native/stable/manifest.json')) and file.name != 'config.example.toml':
                 archive.write(file, file.relative_to(ROOT).as_posix())
 print(json.dumps({'rbz': str(rbz), 'sha256': digest, 'source': str(source)}, ensure_ascii=False))
