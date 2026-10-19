@@ -2,6 +2,7 @@
 require 'tmpdir'
 require 'fileutils'
 require 'digest'
+require 'fiber'
 
 module CJ
   module NativeEngine
@@ -19,11 +20,13 @@ module CJ
       File.file?(path) && Digest::SHA256.file(path).hexdigest == APPROVED_SHA256
     end
 
-    def write_input(path, model, points, vectors)
+    def write_input(path, model, points, vectors, excluded: nil, state: nil, &checkpoint)
       triangles = 0
-      excluded = RayTubesUp.raycast_exclusions(model)
+      meshes = {} # Reuse local face meshes only within this export.
+      excluded ||= RayTubesUp.raycast_exclusions(model)
       image_definitions = {}
       model.definitions.each do |definition|
+        checkpoint&.call
         next unless definition.image?
         definition.instances.each { |image| image_definitions[image.entityID] = definition }
       end
@@ -37,12 +40,15 @@ module CJ
         [tag.entityID, visible]
       end
       File.open(path, 'wb') do |file|
+        state[:file] = file if state
         file.write('CJIN0001' + [0, points.length, vectors.length].pack('L<3'))
+        buffer = ''.b
         visit = lambda do |entities, transform, ancestry|
-          if model.rendering_options['DisplaySectionCuts'] && entities.grep(Sketchup::SectionPlane).any?(&:active?)
-            raise Unsupported, 'активное сечение'
-          end
           entities.each do |entity|
+            checkpoint&.call(triangles)
+            if model.rendering_options['DisplaySectionCuts'] && entity.is_a?(Sketchup::SectionPlane) && entity.active?
+              raise Unsupported, 'активное сечение'
+            end
             instance = entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
             next unless instance || entity.is_a?(Sketchup::Face) || entity.is_a?(Sketchup::Image)
             next if excluded.include?(entity) || entity.get_attribute('CJ_Insolation', 'result', false)
@@ -51,12 +57,23 @@ module CJ
             # Visibility is explicit, including tag folders: hidden geometry is
             # excluded even when SketchUp's Show Hidden options are enabled.
             if entity.is_a?(Sketchup::Face)
-              mesh = entity.mesh(0)
-              mesh.polygons.each do |indices|
-                raise Unsupported, 'нетриангулированная поверхность' unless indices.length == 3
-                coordinates = indices.flat_map { |i| mesh.point_at(i.abs).transform(transform).to_a }
-                file.write(coordinates.pack('E*'))
+              local_triangles = meshes[entity.entityID] ||= begin
+                mesh = entity.mesh(0)
+                vertices = mesh.points
+                mesh.polygons.map do |indices|
+                  raise Unsupported, 'нетриангулированная поверхность' unless indices.length == 3
+                  indices.map { |i| vertices[i.abs - 1] }
+                end
+              end
+              local_triangles.each do |triangle|
+                coordinates = triangle.flat_map { |point| point.transform(transform).to_a }
+                buffer << coordinates.pack('E*')
+                if buffer.bytesize >= 262144
+                  file.write(buffer)
+                  buffer.clear
+                end
                 triangles += 1
+                checkpoint&.call(triangles)
               end
             elsif entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
               if entity.respond_to?(:glued_to) && entity.glued_to && entity.definition.behavior.cuts_opening?
@@ -71,6 +88,7 @@ module CJ
           end
         end
         visit.call(model.entities, Geom::Transformation.new, [])
+        file.write(buffer) unless buffer.empty?
         points.each { |p| file.write(p.to_a.pack('E3')) }
         vectors.each { |v| file.write(v.to_a.pack('E3')) }
         file.seek(8)
@@ -88,18 +106,57 @@ module CJ
       end
       directory = Dir.mktmpdir('cj-engine-')
       job[:native] = { directory: directory, started: Process.clock_gettime(Process::CLOCK_MONOTONIC) }
-      triangles = write_input(File.join(directory, 'input.bin'), job[:model], job[:points], job[:vectors])
-      job[:native][:triangles] = triangles
-      job[:native][:export_ms] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - job[:native][:started]) * 1000
-      job[:native][:pid] = Process.spawn(worker, File.join(directory, 'input.bin'), File.join(directory, 'output.bin'),
-                                          out: File::NULL, err: File.join(directory, 'error.txt'))
-      Sketchup.set_status_text("CJ C++: #{job[:points].length} точек, #{triangles} треугольников")
-      job[:timer] = UI.start_timer(0.03, false) { poll(job) }
+      state = job[:native]
+      state[:worker] = worker
+      state[:fiber] = Fiber.new do
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.08
+        checks = 0
+        checkpoint = lambda do |count = nil|
+          state[:triangles] = count if count
+          checks += 1
+          if checks % 128 == 0 && Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+            Fiber.yield
+            deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.08
+          end
+        end
+        RayTubesUp.prepare_calculation(job, &checkpoint)
+        write_input(File.join(directory, 'input.bin'), job[:model], job[:points], job[:vectors],
+                    excluded: job[:hidden_states].map(&:first), state: state, &checkpoint)
+      end
+      job[:phase] = :exporting
+      RayTubesUp.update_calculation_phase(job, 'Подготовка модели', 'Проверка видимой геометрии…')
+      job[:timer] = UI.start_timer(0.001, false) { export_chunk(job) }
       true
     rescue StandardError => error
       RayTubesUp.log("C++ → SketchUp: #{error.message}")
       cleanup(job)
       false
+    end
+
+    def export_chunk(job)
+      return unless RayTubesUp.instance_variable_get(:@active_calculation).equal?(job)
+      return RayTubesUp.finish_calculation(job, cancelled: true) if job[:cancelled] || !Sketchup.active_model.equal?(job[:model])
+      state = job[:native]
+      result = state[:fiber].resume
+      if state[:fiber].alive?
+        count = state[:triangles] || 0
+        RayTubesUp.update_calculation_phase(job, 'Подготовка модели', "Подготовлено треугольников: #{count}")
+        job[:timer] = UI.start_timer(0.001, false) { export_chunk(job) }
+      else
+        state.delete(:fiber)
+        state[:triangles] = result
+        state[:export_ms] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - state[:started]) * 1000
+        raise 'Рабочий EXE изменён во время подготовки.' unless approved?(state[:worker])
+        state[:pid] = Process.spawn(state[:worker], File.join(state[:directory], 'input.bin'), File.join(state[:directory], 'output.bin'),
+                                    out: File::NULL, err: File.join(state[:directory], 'error.txt'))
+        job[:phase] = :cpp
+        RayTubesUp.update_calculation_phase(job, 'Расчёт инсоляции', "Точек: #{job[:points].length}; направлений: #{job[:total_rays]}")
+        job[:timer] = UI.start_timer(0.03, false) { poll(job) }
+      end
+    rescue StandardError => error
+      RayTubesUp.log("C++ → SketchUp: #{error.message}")
+      cleanup(job)
+      RayTubesUp.start_sketchup_calculation(job)
     end
 
     def read_output(job)
@@ -132,7 +189,7 @@ module CJ
         job[:native][:pid] = nil
         raise File.read(File.join(job[:native][:directory], 'error.txt')) unless finished[1].success?
         read_output(job)
-        RayTubesUp.finish_calculation(job)
+        RayTubesUp.schedule_calculation_finish(job)
       else
         job[:timer] = UI.start_timer(0.03, false) { poll(job) }
       end
@@ -143,6 +200,11 @@ module CJ
     def cleanup(job)
       state = job && job.delete(:native)
       return unless state
+      # HtmlDialog callbacks can run in a different Ruby callback context.
+      # Own and close the file directly; do not resume an abandoned export there.
+      file = state.delete(:file)
+      file.close if file && !file.closed?
+      state.delete(:fiber)
       if state[:pid]
         begin
           unless Process.waitpid(state[:pid], Process::WNOHANG)

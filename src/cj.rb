@@ -626,13 +626,20 @@ module CJ
       [hit_pt, origin.distance(hit_pt)]
     end
 
-    def result_groups(model)
+    def result_groups(model, &checkpoint)
       collections = [model.entities] + model.definitions.map(&:entities)
-      collections.flat_map { |entities| entities.select do |entity|
-        next false unless entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
-        entity.get_attribute('CJ_Insolation', 'result', false) ||
-          (entity.name.match?(/\AInsolation_\d{8}_\d{6}\z/) && entity.layer.name == DEFAULT_TAG_NAME)
-      end }.uniq
+      groups = []
+      collections.each do |entities|
+        entities.each do |entity|
+          checkpoint&.call
+          next unless entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
+          if entity.get_attribute('CJ_Insolation', 'result', false) ||
+             (entity.name.match?(/\AInsolation_\d{8}_\d{6}\z/) && entity.layer.name == DEFAULT_TAG_NAME)
+            groups << entity
+          end
+        end
+      end
+      groups.uniq
     end
 
     def raycast_exclusions(model)
@@ -827,24 +834,70 @@ module CJ
 
     def progress_dialog
       dialog = UI::HtmlDialog.new(dialog_title: 'CJ — расчёт инсоляции',
-                                  preferences_key: 'CJ_CalculationProgress_v1',
-                                  width: 360, height: 150, resizable: false,
+                                  preferences_key: 'CJ_CalculationProgress_v2',
+                                  width: 420, height: 208, use_content_size: true,
+                                  resizable: false, scrollable: false,
                                   style: UI::HtmlDialog::STYLE_DIALOG)
+      dialog.set_content_size(420, 208)
       dialog.set_html(<<~HTML)
         <!doctype html><html lang="ru"><meta charset="utf-8"><style>
-        body{font:14px 'Segoe UI',Arial,sans-serif;margin:18px;color:#202832}
-        #label{margin-bottom:10px} progress{width:100%;height:18px}
-        button{margin-top:14px;padding:7px 18px}
-        </style><div id="label">Подготовка расчёта…</div>
-        <progress id="bar" max="100" value="0"></progress>
-        <button onclick="sketchup.cancel_calculation()">Отменить</button>
-        <script>function updateProgress(done,total){
-          const p=total?Math.floor(done*100/total):0;
-          document.getElementById('bar').value=p;
-          document.getElementById('label').textContent='Проверено лучей: '+done+' из '+total+' ('+p+'%)';
-        }</script></html>
+        *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
+        body{font:14px 'Segoe UI',Arial,sans-serif;padding:18px;color:#202832;background:#f6f8fb}
+        #label{font-size:17px;font-weight:600;margin-bottom:8px}#detail{min-height:36px;color:#526171;line-height:1.4}
+        progress{display:block;width:100%;height:18px;margin:12px 0}footer{display:flex;align-items:center;justify-content:space-between}
+        #elapsed{color:#526171}button{padding:8px 18px;font:inherit;cursor:pointer}
+        </style><div id="label" role="status" aria-live="polite">Подготовка расчёта</div>
+        <div id="detail">Открываем окно расчёта…</div><progress id="bar" max="100"></progress>
+        <footer><span id="elapsed">0 с</span><button id="cancel" onclick="this.disabled=true;sketchup.cancel_calculation()">Отменить</button></footer>
+        <script>
+        const started=Date.now();setInterval(()=>{document.getElementById('elapsed').textContent=Math.floor((Date.now()-started)/1000)+' с'},250);
+        function updatePhase(s){document.getElementById('label').textContent=s.title;document.getElementById('detail').textContent=s.detail;
+          const bar=document.getElementById('bar');if(s.total>0){bar.value=Math.floor(s.done*100/s.total)}else{bar.removeAttribute('value')}}
+        function updateProgress(done,total){updatePhase({title:'Расчёт инсоляции',detail:'Проверено направлений: '+done+' из '+total,done:done,total:total})}
+        document.addEventListener('DOMContentLoaded',()=>requestAnimationFrame(()=>requestAnimationFrame(()=>sketchup.calculation_ready())));
+        </script></html>
       HTML
       dialog
+    end
+
+    def update_calculation_phase(job, title, detail = '')
+      job[:dialog].execute_script("updatePhase(#{JSON.generate({title: title, detail: detail})})")
+      Sketchup.set_status_text("CJ: #{title}. #{detail}", SB_PROMPT)
+    end
+
+    def prepare_calculation(job, &checkpoint)
+      return if job[:prepared]
+      groups = result_groups(job[:model], &checkpoint) + CJ::SavedPoints.all(job[:model])
+      job[:hidden_states] = groups.map { |group| [group, group.hidden?] }
+      job[:model].start_operation('CJ Инсоляция: несколько точек', true)
+      job[:operation_started] = true
+      groups.each { |group| group.hidden = true }
+      job[:prepared] = true
+    end
+
+    def begin_calculation(job)
+      return unless @active_calculation.equal?(job)
+      return finish_calculation(job, cancelled: true) if job[:cancelled] || !Sketchup.active_model.equal?(job[:model])
+      start_sketchup_calculation(job) unless CJ::NativeEngine.start(job)
+    rescue StandardError => error
+      finish_calculation(job, error: error)
+    end
+
+    def start_sketchup_calculation(job)
+      return unless @active_calculation.equal?(job)
+      return finish_calculation(job, cancelled: true) if job[:cancelled] || !Sketchup.active_model.equal?(job[:model])
+      update_calculation_phase(job, 'Расчёт инсоляции', 'Расчёт средствами SketchUp…')
+      prepare_calculation(job)
+      job[:phase] = :sketchup
+      job[:timer] = UI.start_timer(0.01, false) { process_calculation_chunk(job) }
+    rescue StandardError => error
+      finish_calculation(job, error: error)
+    end
+
+    def schedule_calculation_finish(job)
+      job[:phase] = :drawing
+      update_calculation_phase(job, 'Построение результата')
+      job[:timer] = UI.start_timer(0.03, false) { finish_calculation(job) }
     end
 
     def restore_calculation_visibility(job)
@@ -858,8 +911,13 @@ module CJ
 
       @active_calculation = nil
       UI.stop_timer(job[:timer]) if job[:timer]
+      @last_calculation = {cancelled: cancelled, error: error&.message, phase: job[:phase], points: job[:points].length}
       begin
-        restore_calculation_visibility(job)
+        begin
+          CJ::NativeEngine.cleanup(job) if cancelled || error
+        ensure
+          restore_calculation_visibility(job)
+        end
         if cancelled || error
           job[:model].abort_operation if job[:operation_started]
           job[:operation_started] = false
@@ -878,6 +936,7 @@ module CJ
           Sketchup.set_status_text("Готово: #{job[:points].length} точек.", SB_PROMPT)
         end
       rescue => finish_error
+        @last_calculation[:error] = finish_error.message
         job[:model].abort_operation if job[:operation_started]
         job[:operation_started] = false
         log("ERROR: #{finish_error.class}: #{finish_error.message}")
@@ -918,7 +977,7 @@ module CJ
       job[:dialog].execute_script("updateProgress(#{done},#{job[:total_rays]})")
       Sketchup.set_status_text("Инсоляция: #{done}/#{job[:total_rays]} лучей", SB_PROMPT)
       if done >= job[:total_rays]
-        finish_calculation(job)
+        schedule_calculation_finish(job)
       else
         job[:timer] = UI.start_timer(0.01, false) { process_calculation_chunk(job) }
       end
@@ -941,23 +1000,25 @@ module CJ
         vectors: vectors,
         calculations: points.each_with_index.map { |point, i| { origin: point.clone, results: [], window_plane: window_planes && window_planes[i], source_id: source_ids && source_ids[i] } },
         point_index: 0, ray_index: 0, total_rays: points.length * vectors.length,
-        hidden_states: raycast_exclusions(model).map { |group| [group, group.hidden?] },
+        hidden_states: [], phase: :waiting_ui,
         dialog: dialog, timer: nil, operation_started: false, cancelled: false
       }
       @active_calculation = job
       dialog.add_action_callback('cancel_calculation') do |_context|
         current = @active_calculation
-        current[:cancelled] = true if current
+        finish_calculation(current, cancelled: true) if current && current[:dialog].equal?(dialog)
       end
       dialog.set_on_closed do
         current = @active_calculation
-        current[:cancelled] = true if current && current[:dialog].equal?(dialog)
+        finish_calculation(current, cancelled: true) if current && current[:dialog].equal?(dialog)
       end
-      model.start_operation('CJ Инсоляция: несколько точек', true)
-      job[:operation_started] = true
-      job[:hidden_states].each { |group, _hidden| group.hidden = true }
+      dialog.add_action_callback('calculation_ready') do |_context|
+        if @active_calculation.equal?(job) && job[:phase] == :waiting_ui
+          job[:phase] = :starting
+          job[:timer] = UI.start_timer(0.03, false) { begin_calculation(job) }
+        end
+      end
       dialog.show
-      process_calculation_chunk(job) unless CJ::NativeEngine.start(job)
       job
     rescue => error
       if job
