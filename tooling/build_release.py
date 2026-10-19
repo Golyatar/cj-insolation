@@ -26,6 +26,8 @@ with zipfile.ZipFile(rbz, 'w', zipfile.ZIP_DEFLATED) as archive:
     archive.write(ROOT / 'src/result_style.rb', 'cj_insolation/result_style.rb')
     archive.write(ROOT / 'src/window_placement.rb', 'cj_insolation/window_placement.rb')
     archive.write(ROOT / 'src/window_components.rb', 'cj_insolation/window_components.rb')
+    for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'point_observers.rb']:
+        archive.write(ROOT / 'src' / name, 'cj_insolation/' + name)
     for icon in (ROOT / 'src/icons').glob('*'):
         archive.write(icon, 'cj_insolation/icons/' + icon.name)
     archive.write(ROOT / 'INSTALL.md', 'cj_insolation/INSTALL.md')

@@ -16,7 +16,7 @@ For automatic bridge startup in every SketchUp 2022 instance, run:
 .\tooling\install_bridge.ps1 -SketchUpVersion 2022
 ```
 
-Restart each SketchUp instance. Each process gets a separate session and request folder. In the project developer setup, the `CJ` toolbar includes `Подключить CJ Bridge`: it starts a stopped bridge or reports the PID when already connected. The `Extensions → CJ Bridge` menu also provides restart, stop, and status commands.
+Restart each SketchUp instance. The bridge has its own loader, CJ Bridge toolbar and Extensions → CJ Bridge menu. The insolation plugin has no bridge dependency or bridge controls. Its RBZ excludes bridge files.
 
 ## Tools
 

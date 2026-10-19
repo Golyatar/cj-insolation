@@ -13,12 +13,13 @@ module CJDevelopment
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_components.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'result_style.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'updates.rb'))
+    %w[settings saved_points interface point_observers].each { |name| RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', name + '.rb')) }
     previous_verbose = $VERBOSE
     begin
       $VERBOSE = nil # Existing constants are expected during development reloads.
       if defined?(CJ::RayTubesUp)
         plugin = CJ::RayTubesUp
-        [:add_cone_group, :csv_report, :choose_csv_directory, :export_csv].each do |name|
+        [:add_cone_group, :csv_report, :choose_csv_directory, :export_csv, :connect_bridge].each do |name|
           plugin.send(:remove_method, name) if plugin.instance_methods(false).include?(name)
         end
         [:DEFAULT_RADIUS_MM, :CIRCLE_SEGMENTS, :CONE_HALF_ANGLE_DEG].each do |name|
@@ -62,9 +63,9 @@ module CJDevelopment
     # API probe only: does not draw, change visibility, or save the user's model.
     probe = CJ::RayTubesUp.raycast_world(model, Geom::Point3d.new(0, 0, 1000.m), Geom::Vector3d.new(0, 0, 1))
     checks << { name: 'raytest_api', passed: probe.nil? || (probe[0].is_a?(Geom::Point3d) && probe[1] >= 0) }
-    toolbar = UI.toolbar('CJ')
-    bridge_button = toolbar.any? { |command| command.menu_text == 'Подключить CJ Bridge' }
-    checks << { name: 'bridge_button_registered', passed: bridge_button }
+    commands = CJ::Interface.commands
+    checks << { name: 'insolation_icon_registered', passed: commands[:pick].small_icon && File.file?(commands[:pick].small_icon) }
+    checks << { name: 'bridge_separate_from_plugin', passed: commands.values.none? { |c| c.menu_text.include?('Bridge') } }
     report = {
       checked_at: Time.now.iso8601,
       sketchup_version: Sketchup.version,

@@ -306,14 +306,5 @@ module CJ
     rescue StandardError=>e
       UI.messagebox(e.message)
     end
-    unless const_defined?(:UI_INSTALLED, false)
-      command=UI::Command.new('Инсоляция — точка по окну') { CJ::WindowPlacement.activate }
-      command.tooltip='Предложить расчётную точку по окну, стене и выступам'
-      command.small_icon=File.join(__dir__,'icons','window_point.svg')
-      command.large_icon=command.small_icon
-      UI.toolbar('CJ').add_item(command)
-      UI.menu('Plugins').add_submenu('CJ').add_item(command)
-      UI_INSTALLED=true
-    end
   end
 end

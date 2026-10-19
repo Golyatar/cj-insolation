@@ -6,7 +6,7 @@ module CJ
     DEFAULTS = [1300.0, 1400.0, 300.0, 150.0, 70.0, 60.0].freeze unless const_defined?(:DEFAULTS, false)
 
     def validate(values)
-      raise 'Ожидаются шесть положительных размеров в мм.' unless values.length==6 && values.all? { |v| v.is_a?(Numeric) && v.finite? && v>0 }
+      raise 'Ожидаются шесть положительных размеров в мм.' unless values.is_a?(Array) && values.length==6 && values.all? { |v| v.is_a?(Numeric) && v.finite? && v>0 }
       w,h,wall,rear,depth,rim=values
       raise 'Рама слишком широкая для окна.' unless rim*2<[w,h].min
       raise 'Внутренняя линия окна должна находиться внутри стены, а глубина рамы не превышать посадку.' unless depth<=rear && rear<=wall
@@ -117,25 +117,7 @@ module CJ
       model=Sketchup.active_model
       raise 'Выйдите из редактирования группы перед вставкой.' if model.active_path
       remove_old_markers(model)
-      prompts=['Ширина, мм','Высота, мм','Толщина стены / откосов, мм','Посадка внутренней линии окна, мм','Глубина рамы, мм','Ширина рамы, мм']
-      return @dialog.bring_to_front if @dialog && @dialog.visible?
-      @dialog = UI::HtmlDialog.new(dialog_title: 'CJ — новое окно', width: 490, height: 620, resizable: true, scrollable: true)
-      fields = prompts.each_with_index.map { |label,i| "<label>#{label}<input id='p#{i}' type='number' min='1' step='any' value='#{DEFAULTS[i]}' required></label>" }.join
-      @dialog.set_html(<<~HTML)
-        <!doctype html><html lang="ru"><meta charset="utf-8"><style>*{box-sizing:border-box}body{padding:24px;background:#f3f6fa;color:#192e43;font:14px 'Segoe UI'}h1{font-size:24px;margin:0 0 8px}p{color:#617287;line-height:1.5}form{background:white;border:1px solid #dee5ed;border-radius:14px;padding:18px}label{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}input{width:105px;padding:9px;border:1px solid #c9d5e1;border-radius:7px;font:inherit}button{width:100%;border:0;border-radius:9px;background:#ffd36a;padding:13px;font:600 14px 'Segoe UI';cursor:pointer}#error{color:#c53939}</style>
-        <h1>Двухстворчатое окно</h1><p>Размеры в миллиметрах. Расчётная точка определяется параметрами окна.</p><form onsubmit="event.preventDefault();sketchup.place(Array.from(document.querySelectorAll('input')).map(function(i){return Number(i.value)}))">#{fields}<button>Разместить окна</button><p id="error" role="alert"></p></form><p>Нажимайте на наружные вертикальные грани. Esc завершает размещение.</p></html>
-      HTML
-      @dialog.add_action_callback('place') do |_context, values|
-        begin
-          raise 'Вернитесь к исходной модели и выйдите из группы.' unless Sketchup.active_model.equal?(model) && !model.active_path
-          validate(values)
-          place(model, values)
-          @dialog.close
-        rescue StandardError => e
-          @dialog.execute_script("document.getElementById('error').textContent=#{JSON.generate(e.message)}")
-        end
-      end
-      @dialog.show
+      place(model, CJ::Settings.values['window'])
     rescue StandardError=>e
       UI.messagebox(e.message)
     end
@@ -165,14 +147,5 @@ module CJ
       UI.messagebox(e.message)
     end
 
-    unless const_defined?(:UI_INSTALLED,false)
-      menu=UI.menu('Plugins').add_submenu('CJ')
-      [['Вставить окно CJ',:insert,'window_insert.svg'],['Рассчитать окна CJ',:calculate,'windows_batch.svg']].each do |name,action,icon|
-        cmd=UI::Command.new(name) { CJ::WindowComponents.public_send(action) }
-        cmd.tooltip=name;cmd.small_icon=File.join(__dir__,'icons',icon);cmd.large_icon=cmd.small_icon
-        UI.toolbar('CJ').add_item(cmd);menu.add_item(cmd)
-      end
-      UI_INSTALLED=true
-    end
   end
 end

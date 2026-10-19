@@ -10,7 +10,7 @@ module CJResultStyleChecks
       visibility = layers.values.map { |tag| [tag,tag.visible?] }
       layers.each_value { |tag| tag.visible = true }
       checks << {name:'result_tags_one_folder',passed:layers.values.all? { |tag| tag.folder.name == 'Инсоляция' } && layers.values.uniq.length == 5}
-      anchor = model.bounds.max.offset(Geom::Vector3d.new(100.m,100.m,100.m))
+      anchor = (model.bounds.empty? ? ORIGIN : model.bounds.max).offset(Geom::Vector3d.new(100.m,100.m,100.m))
       results = Array.new(90) { {hit_dist:nil} }
       batch = CJ::RayTubesUp.build_batch(model,[{origin:anchor,results:results},{origin:anchor.offset(X_AXIS,1.m),results:[]}],mode: :summary)
       points = batch.entities.grep(Sketchup::Group)

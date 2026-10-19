@@ -130,17 +130,5 @@ module CJ
       @dialog.add_action_callback('releases') { UI.openURL(RELEASES) }
       @dialog.show
     end
-    unless const_defined?(:TOOLBAR_INSTALLED, false)
-      command = UI::Command.new('Версия и обновления') { CJ::Updates.show }
-      command.tooltip = 'Проверить и установить обновление CJ'
-      command.small_icon = File.join(__dir__, 'icons', 'updates.svg')
-      command.large_icon = command.small_icon
-      UI.menu('Plugins').add_submenu('CJ').add_item(command) unless const_defined?(:UI_INSTALLED, false)
-      UI.toolbar('CJ').add_item(command)
-      UI_INSTALLED = true unless const_defined?(:UI_INSTALLED, false)
-      TOOLBAR_INSTALLED = true
-      UI.start_timer(15, false) { check(true) if Time.now.to_i - Sketchup.read_default('CJ_Updates', 'last_check', 0).to_i >= 86_400 }
-    end
   end
 end
-

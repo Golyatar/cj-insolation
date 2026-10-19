@@ -399,6 +399,12 @@ module CJBridge
       @connect_command.large_icon = icon
     end
 
+    unless @toolbar
+      @toolbar = UI::Toolbar.new('CJ Bridge')
+      @toolbar.add_item(@connect_command)
+      @toolbar.show
+    end
+
     unless @menu_installed
       menu = UI.menu('Extensions').add_submenu('CJ Bridge')
       menu.add_item(@connect_command)

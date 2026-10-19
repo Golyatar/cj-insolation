@@ -15,23 +15,7 @@ module CJ
       Sketchup.read_default('CJ_ResultStyle', 'radius_mm', 100.0).to_f
     end
     def show
-      return @dialog.bring_to_front if @dialog && @dialog.visible?
-      @dialog = UI::HtmlDialog.new(dialog_title: 'CJ — оформление', width: 430, height: 340, resizable: true)
-      @dialog.set_html(<<~HTML)
-        <!doctype html><meta charset="utf-8"><style>body{font:14px 'Segoe UI';padding:24px;background:#f3f6fa;color:#192e43}h2{font-size:22px}p{line-height:1.6;color:#617287}input{font:inherit;padding:10px;border:1px solid #c9d5e1;border-radius:8px;width:100px}button{background:#ffd36a;border:0;border-radius:8px;padding:12px 20px;cursor:pointer}#error{color:#c53939}</style>
-        <h2>Маркеры результата</h2><label>Радиус сферы, мм <input id="radius" type="number" min="0" max="10000" value="#{radius}"></label><p>0 — без сфер. Применяется к следующим расчётам. Зелёный — проходит, красный — не проходит.</p><button onclick="sketchup.save(document.getElementById('radius').value)">Сохранить</button><p id="error" role="alert"></p>
-      HTML
-      @dialog.add_action_callback('save') do |_context, value|
-        begin
-          number = Float(value)
-          raise ArgumentError unless number.finite? && number >= 0 && number <= 10000
-          Sketchup.write_default('CJ_ResultStyle', 'radius_mm', number)
-          @dialog.close
-        rescue ArgumentError, TypeError
-          @dialog.execute_script("document.getElementById('error').textContent='Введите число от 0 до 10000.'")
-        end
-      end
-      @dialog.show
+      CJ::Settings.show
     end
     def material(model, passed)
       name = passed ? 'CJ_Passed' : 'CJ_Failed'
@@ -76,15 +60,6 @@ module CJ
         group.entities.add_instance(definition, transform)
       end
       group
-    end
-    unless const_defined?(:UI_INSTALLED, false)
-      command = UI::Command.new('Оформление результатов') { CJ::ResultStyle.show }
-      command.tooltip = 'Настроить радиус сфер результата'
-      command.small_icon = File.join(__dir__, 'icons', 'settings.svg')
-      command.large_icon = command.small_icon
-      UI.toolbar('CJ').add_item(command)
-      UI.menu('Plugins').add_submenu('CJ').add_item(command)
-      UI_INSTALLED = true
     end
   end
 end

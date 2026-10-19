@@ -8,7 +8,8 @@ module CJWindowComponentChecks
       checks << {name:'window_component_has_invisible_point',passed:d.get_attribute('CJ_Window','point_mm').length==3 && d.entities.grep(Sketchup::ConstructionPoint).empty?}
       checks << {name:'window_component_gluing_enabled',passed:d.behavior.is2d? && d.behavior.cuts_opening?}
       group=model.entities.add_group
-      anchor=Geom::Point3d.new(model.bounds.max.x+100.m,model.bounds.max.y+100.m,model.bounds.max.z+100.m)
+      base=model.bounds.empty? ? ORIGIN : model.bounds.max
+      anchor=Geom::Point3d.new(base.x+100.m,base.y+100.m,base.z+100.m)
       group.transform!(Geom::Transformation.translation(anchor))
       orientation=Geom::Transformation.axes(ORIGIN,X_AXIS,Z_AXIS,Geom::Vector3d.new(0,-1,0))
       first=group.entities.add_instance(d,orientation)

@@ -21,19 +21,6 @@ module CJ
       'Инсоляция — выбрать точки'
     end
 
-    def connect_bridge
-      bridge_file = File.expand_path('../tooling/sketchup_bridge.rb', __dir__)
-      unless defined?(CJBridge) && CJBridge.respond_to?(:source_stamp) && CJBridge.source_stamp == File.mtime(bridge_file).to_f
-        raise "CJ Bridge not found: #{bridge_file}" unless File.file?(bridge_file)
-        Kernel.load(bridge_file)
-      end
-      CJBridge.connect
-    rescue StandardError => error
-      UI.messagebox("Не удалось подключить CJ Bridge: #{error.class}: #{error.message}")
-      false
-    end
-
-
     DEFAULT_MAX_LEN_M = 1000.0
     DEFAULT_TAG_NAME = 'RAYS'.freeze
     TIME_STEP_MINUTES = 1.0 # Current dataset: one direction represents one minute.
@@ -581,7 +568,6 @@ module CJ
           "#{streaks.join(', ')}. Суммарно = #{total}"
         end
 
-      text = "Точка #{point_number}\n#{text}" if point_number
       offset = Geom::Vector3d.new(0, 0, L_OFFSET.mm)
       label = entities.add_text(text, origin, offset)
       label.layer = CJ::ResultStyle.tags(Sketchup.active_model)[:labels]
@@ -649,8 +635,12 @@ module CJ
       end }.uniq
     end
 
+    def raycast_exclusions(model)
+      result_groups(model) + (defined?(CJ::SavedPoints) ? CJ::SavedPoints.all(model) : [])
+    end
+
     def without_results(model)
-      states = result_groups(model).map { |group| [group, group.hidden?] }
+      states = raycast_exclusions(model).map { |group| [group, group.hidden?] }
       begin
         states.each { |group, _hidden| group.hidden = true }
         yield
@@ -798,6 +788,7 @@ module CJ
         number = first_number + index
         group.name = "Точка #{number}"
         group.set_attribute('CJ_Insolation', 'point_number', number)
+        group.set_attribute('CJ_Insolation', 'source_id', calculation[:source_id]) if calculation[:source_id]
         origin = calculation[:origin]
         results = calculation[:results]
         group.set_attribute('CJ_Insolation', 'origin', origin.to_a)
@@ -875,6 +866,7 @@ module CJ
           Sketchup.set_status_text(cancelled ? 'Расчёт отменён; частичные результаты удалены.' : 'Расчёт прерван из-за ошибки.', SB_PROMPT)
           UI.messagebox("Не удалось выполнить расчёт: #{error.message}") if error
         else
+          CJ::SavedPoints.remove_results(job[:model], job[:source_ids]) if job[:source_ids]
           batch = build_batch(job[:model], job[:calculations], mode: job[:mode])
           job[:model].rendering_options['EdgeColorMode'] = 0 if job[:mode] == :lines
           job[:model].rendering_options['DisplayColorByLayer'] = false if job[:mode] == :lines
@@ -933,21 +925,22 @@ module CJ
       finish_calculation(job, error: error)
     end
 
-    def run_from_points(points, mode: :lines, window_planes: nil)
+    def run_from_points(points, mode: :lines, window_planes: nil, source_ids: nil)
       return nil if @active_calculation
       raise ArgumentError, 'Нет выбранных точек' if points.empty?
       raise ArgumentError, 'Неизвестный режим отображения' unless [:lines, :surface, :summary].include?(mode)
       model = Sketchup.active_model
+      raise ArgumentError, 'Идентификаторы не соответствуют точкам.' if source_ids && source_ids.length != points.length
       vectors = ray_vectors
       raise ArgumentError, 'Список векторов пуст' if vectors.empty?
 
       dialog = progress_dialog
       job = {
-        model: model, points: points.map(&:clone), mode: mode,
+        model: model, points: points.map(&:clone), mode: mode, source_ids: source_ids,
         vectors: vectors,
-        calculations: points.each_with_index.map { |point, i| { origin: point.clone, results: [], window_plane: window_planes && window_planes[i] } },
+        calculations: points.each_with_index.map { |point, i| { origin: point.clone, results: [], window_plane: window_planes && window_planes[i], source_id: source_ids && source_ids[i] } },
         point_index: 0, ray_index: 0, total_rays: points.length * vectors.length,
-        hidden_states: result_groups(model).map { |group| [group, group.hidden?] },
+        hidden_states: raycast_exclusions(model).map { |group| [group, group.hidden?] },
         dialog: dialog, timer: nil, operation_started: false, cancelled: false
       }
       @active_calculation = job
@@ -1023,7 +1016,7 @@ module CJ
         points = @points.map(&:clone)
         @points.clear
         view.model.select_tool(nil)
-        CJ::RayTubesUp.run_from_points(points, mode: @mode)
+        CJ::SavedPoints.create_and_calculate(points, mode: @mode)
       end
 
       def onLButtonDown(_flags, x, y, view)
@@ -1063,98 +1056,18 @@ module CJ
     end
 
     def activate_pick_tool(preset_points = nil, expected_model = nil, context_note = nil, window_planes: nil)
-      expected_model ||= Sketchup.active_model if preset_points
-      if @display_dialog && @display_dialog.visible?
-        @display_dialog.bring_to_front
-        return
+      model = Sketchup.active_model
+      if preset_points
+        raise 'Модель или контекст изменились.' if (expected_model && !model.equal?(expected_model)) || model.active_path
+        run_from_points(preset_points, mode: CJ::Settings.mode, window_planes: window_planes)
+      else
+        raise 'Выйдите из редактирования группы перед выбором точек.' if model.active_path
+        model.select_tool(PickPointTool.new(CJ::Settings.mode))
       end
-      dialog = UI::HtmlDialog.new(dialog_title: 'CJ — вид результата',
-                                  preferences_key: 'CJ_DisplayMode_v1',
-                                  width: 490, height: 550,
-                                  resizable: true, scrollable: true,
-                                  style: UI::HtmlDialog::STYLE_DIALOG)
-      dialog.set_html(<<~HTML)
-        <!doctype html><html lang="ru"><head><meta charset="utf-8">
-        <style>
-        * { box-sizing: border-box; }
-        body { margin: 0; padding: 20px; font: 14px 'Segoe UI', Arial, sans-serif; background: #f3f6fa; color: #192e43; }
-        h1 { font-size: 23px; margin: 0 0 12px; padding: 20px; border-radius: 14px; background: #192e43; color: #ffd36a; }
-        p { margin: 0 0 14px; color: #526171; }
-        button { display: block; width: 100%; text-align: left; padding: 16px 18px; margin: 10px 0; border: 1px solid #dce5ee; border-radius: 12px; background: white; color: #202832; font: inherit; cursor: pointer; }
-        button:hover, button:focus { border-color: #d6a530; background: #fff8e4; outline: none; }
-        strong { display: block; margin-bottom: 2px; }
-        small { font-size: 12px; color: #526171; }
-        </style></head><body>
-        <h1>Как показать результат?</h1>
-        <p>Расчёт одинаковый во всех режимах.</p>
-        <p>#{context_note.to_s.gsub('&', '&amp;').gsub('<', '&lt;').gsub('>', '&gt;')}</p>
-        <button autofocus onclick="sketchup.choose_mode('lines')"><strong>Линии</strong><small>Быстрое отображение лучей.</small></button>
-        <button onclick="sketchup.choose_mode('surface')"><strong>Поверхность</strong><small>Зелёный и красный веер между соседними лучами.</small></button>
-        <button onclick="sketchup.choose_mode('summary')"><strong>Итоги</strong><small>Только подписи, без лучей. Для многих точек.</small></button>
-        </body></html>
-      HTML
-      dialog.add_action_callback('choose_mode') do |_context, choice|
-        mode = { 'lines' => :lines, 'surface' => :surface, 'summary' => :summary }[choice]
-        next unless mode
-        dialog.close
-        if preset_points && (!Sketchup.active_model.equal?(expected_model) || expected_model.active_path)
-          UI.messagebox('Модель или контекст изменились. Вернитесь к модели, в которой выбирали окна.')
-          next
-        end
-        if preset_points
-          next unless Sketchup.active_model.equal?(expected_model) && !expected_model.active_path
-          run_from_points(preset_points, mode: mode, window_planes: window_planes)
-        else
-          Sketchup.active_model.select_tool(PickPointTool.new(mode))
-        end
-      end
-      @display_dialog = dialog
-      dialog.show
+    rescue StandardError => error
+      UI.messagebox(error.message)
     end
 
-    unless defined?(CJ::RAY_TUBES_UP_UI_LOADED)
-      cmd = UI::Command.new(cmd_name) do
-        CJ::RayTubesUp.activate_pick_tool
-      end
-      cmd.small_icon = File.join(__dir__, 'icons', 'insolation.svg')
-      cmd.large_icon = cmd.small_icon unless cmd.small_icon.empty?
-
-      cmd.tooltip = cmd_name
-      cmd.status_bar_text = 'Выбрать несколько точек; Enter — построить лучи инсоляции'
-      cmd.menu_text = cmd_name
-
-      UI.menu('Plugins').add_submenu(plugin_menu).add_item(cmd)
-
-      toolbar = UI::Toolbar.new(plugin_menu)
-      toolbar.add_item(cmd)
-      toolbar.show
-
-      CJ::RAY_TUBES_UP_UI_LOADED = true
-    end
-
-    # Developer-only bridge control: the tooling folder is absent from the user RBZ.
-    bridge_file = File.expand_path('../tooling/sketchup_bridge.rb', __dir__)
-    bridge_icon = File.expand_path('../tooling/icons/cj_bridge.svg', __dir__)
-    if File.file?(bridge_file) && defined?(CJBridge) && (!CJBridge.respond_to?(:source_stamp) || CJBridge.source_stamp != File.mtime(bridge_file).to_f)
-      RubyVM::InstructionSequence.compile_file(bridge_file)
-      UI.start_timer(1, false) { Kernel.load(bridge_file) }
-    end
-    unless defined?(CJ::RAY_BRIDGE_UI_LOADED) || !File.file?(bridge_file)
-      bridge_cmd = UI::Command.new('Подключить CJ Bridge') do
-        CJ::RayTubesUp.connect_bridge
-      end
-      bridge_cmd.small_icon = bridge_icon if File.file?(bridge_icon)
-      bridge_cmd.large_icon = bridge_icon if File.file?(bridge_icon)
-      bridge_cmd.tooltip = 'Подключить мост Codex к текущему окну SketchUp'
-      bridge_cmd.status_bar_text = 'Запустить CJ Bridge для этого экземпляра SketchUp'
-      bridge_cmd.menu_text = 'Подключить CJ Bridge'
-
-      toolbar = UI.toolbar(plugin_menu)
-      toolbar.add_item(bridge_cmd)
-      toolbar.show
-      UI.menu('Plugins').add_submenu(plugin_menu).add_item(bridge_cmd)
-      CJ::RAY_BRIDGE_UI_LOADED = true
-    end
   end
 end
 
@@ -1162,10 +1075,7 @@ Kernel.load(File.join(__dir__, 'result_style.rb'))
 Kernel.load(File.join(__dir__, 'window_placement.rb'))
 Kernel.load(File.join(__dir__, 'window_components.rb'))
 Kernel.load(File.join(__dir__, 'updates.rb'))
-# Also refresh existing command icons when developing through the bridge.
-UI.toolbar('CJ').each do |command|
-  icon = {CJ::RayTubesUp.cmd_name => 'insolation', 'Инсоляция — точка по окну' => 'window_point', 'Вставить окно CJ' => 'window_insert', 'Рассчитать окна CJ' => 'windows_batch'}[command.menu_text]
-  next unless icon
-  command.small_icon = File.join(__dir__, 'icons', "#{icon}.svg")
-  command.large_icon = command.small_icon
-end
+Kernel.load(File.join(__dir__, 'settings.rb'))
+Kernel.load(File.join(__dir__, 'saved_points.rb'))
+Kernel.load(File.join(__dir__, 'point_observers.rb'))
+Kernel.load(File.join(__dir__, 'interface.rb'))

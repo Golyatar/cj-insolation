@@ -24,7 +24,8 @@ module CJGeometryChecks
       group.name = 'CJ_TEMPORARY_TEST_ONLY'
       # Put the fixture beyond existing model bounds so unrelated geometry cannot intercept +X rays.
       bounds = model.bounds
-      anchor = Geom::Point3d.new(bounds.max.x + 1000.m, bounds.max.y + 1000.m, bounds.max.z + 1000.m)
+      base = bounds.empty? ? ORIGIN : bounds.max
+      anchor = Geom::Point3d.new(base.x + 1000.m, base.y + 1000.m, base.z + 1000.m)
       group.transform!(Geom::Transformation.translation(anchor))
       entities = group.entities
       entities.add_face([10.m, -2.m, -2.m], [10.m, 2.m, -2.m], [10.m, 2.m, 2.m], [10.m, -2.m, 2.m])
@@ -122,7 +123,7 @@ module CJGeometryChecks
       point_groups = surface_batch.entities.grep(Sketchup::Group)
       checks << { name: 'surface_opacity_50_percent', passed: point_groups.all? { |g| g.entities.grep(Sketchup::Face).all? { |f| (f.material.alpha - 0.5).abs < 0.01 && (f.back_material.alpha - 0.5).abs < 0.01 } } }
       numbers = point_groups.map { |g| g.get_attribute('CJ_Insolation', 'point_number') }
-      checks << { name: 'persistent_number_labels', passed: numbers.uniq.length == 2 && point_groups.all? { |g| g.entities.grep(Sketchup::Text).any? { |t| t.text.start_with?("Точка #{g.get_attribute('CJ_Insolation', 'point_number')}\n") } } }
+      checks << { name: 'internal_numbers_without_visible_labels', passed: numbers.uniq.length == 2 && point_groups.all? { |g| g.entities.grep(Sketchup::Text).none? { |t| t.text.start_with?('Точка ') } } }
       root_loader = File.join(CJBridge::ROOT, 'src', 'cj_insolation.rb')
       RubyVM::InstructionSequence.compile_file(root_loader)
       checks << { name: 'extension_loader_compiles', passed: true }
