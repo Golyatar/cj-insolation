@@ -557,7 +557,7 @@ module CJ
       streaks
     end
 
-    def add_result_label(entities, origin, results, point_number: nil)
+    def add_result_label(entities, origin, results, point_number: nil, layers: nil)
       streaks = clear_streaks(results)
       total = streaks.sum
 
@@ -570,7 +570,7 @@ module CJ
 
       offset = Geom::Vector3d.new(0, 0, L_OFFSET.mm)
       label = entities.add_text(text, origin, offset)
-      label.layer = CJ::ResultStyle.tags(Sketchup.active_model)[:labels]
+      label.layer = (layers || CJ::ResultStyle.tags(Sketchup.active_model))[:labels]
 
       log("Label: #{text}")
     end
@@ -694,8 +694,8 @@ module CJ
       end
     end
 
-    def add_surface(entities, origin, results, maxlen)
-      layers = CJ::ResultStyle.tags(Sketchup.active_model)
+    def add_surface(entities, origin, results, maxlen, layers: nil)
+      layers ||= CJ::ResultStyle.tags(Sketchup.active_model)
       palette = [['CJ_Surface_Green_50', [0, 200, 0]], ['CJ_Surface_Red_50', [255, 0, 0]]].map do |name, color|
         material = Sketchup.active_model.materials[name] || Sketchup.active_model.materials.add(name)
         material.color = color
@@ -771,7 +771,7 @@ module CJ
 
     def build_batch(model, calculations, mode: :lines)
       raise ArgumentError, 'Неизвестный режим отображения' unless [:lines, :surface, :summary].include?(mode)
-      layers = CJ::ResultStyle.tags(model)
+      layer_sets = CJ::ResultStyle.organize_existing(model)
       batch = model.entities.add_group
       batch.name = "Insolation_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
       batch.layer = model.layers[0]
@@ -791,6 +791,8 @@ module CJ
       batch.set_attribute('CJ_Insolation', 'first_point_number', first_number)
       maxlen = (DEFAULT_MAX_LEN_M * 1000.0).mm
       calculations.each_with_index do |calculation, index|
+        assessment = assess_insolation(calculation[:results])
+        layers = layer_sets[assessment[:passed]]
         group = batch.entities.add_group
         number = first_number + index
         group.name = "Точка #{number}"
@@ -807,9 +809,8 @@ module CJ
           edge.material = color if edge
           edge.layer = layers[result[:hit_dist] ? :red : :green] if edge
         end
-        add_surface(group.entities, origin, results, maxlen) if mode == :surface
-        add_result_label(group.entities, origin, results, point_number: number)
-        assessment = assess_insolation(results)
+        add_surface(group.entities, origin, results, maxlen, layers: layers) if mode == :surface
+        add_result_label(group.entities, origin, results, point_number: number, layers: layers)
         group.set_attribute('CJ_Insolation', 'passed', assessment[:passed])
         CJ::ResultStyle.marker(group.entities, calculation, assessment[:passed], layers)
       end

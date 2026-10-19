@@ -3,13 +3,51 @@ module CJ
   module ResultStyle
     extend self
     NAMES = {green: 'Зелёные лучи и сегменты', red: 'Красные лучи и сегменты', spheres: 'Сферы', windows: 'Плоскости окон', labels: 'Подписи'}.freeze
-    def tags(model)
+    def tags(model, passed: nil)
       folder = model.layers.folders.find { |f| f.name == 'Инсоляция' } || model.layers.add_folder('Инсоляция')
+      category = passed.nil? ? nil : (passed ? 'Проходят' : 'Не проходят')
+      folder = folder.folders.find { |f| f.name == category } || folder.add_folder(category) if category
       NAMES.transform_values do |name|
-        layer = model.layers["CJ · #{name}"] || model.layers.add("CJ · #{name}")
+        full_name = ['CJ', category, name].compact.join(' · ')
+        layer = model.layers[full_name]
+        legacy = model.layers["CJ · #{name}"]
+        if !layer && passed == true && legacy
+          layer = legacy
+          layer.name = full_name
+        end
+        unless layer
+          layer = model.layers.add(full_name)
+          reference = legacy || model.layers["CJ · Проходят · #{name}"]
+          layer.visible = reference.visible? if category && reference
+        end
         folder.add_layer(layer)
         layer
       end
+    end
+
+    # Reassign only our display tags; saved point handles and geometry stay intact.
+    # Called within an undo operation. Existing results need no ray calculations.
+    def organize_existing(model)
+      sets = {true => tags(model, passed: true), false => tags(model, passed: false)}
+      keys = {}
+      NAMES.each do |key, name|
+        ['CJ', 'CJ · Проходят', 'CJ · Не проходят'].each { |prefix| keys["#{prefix} · #{name}"] = key }
+      end
+      move = lambda do |entities, layers|
+        entities.each do |entity|
+          key = keys[entity.layer.name] if entity.respond_to?(:layer)
+          entity.layer = layers[key] if key
+          move.call(entity.entities, layers) if entity.is_a?(Sketchup::Group)
+        end
+      end
+      model.entities.grep(Sketchup::Group).each do |batch|
+        next unless batch.get_attribute('CJ_Insolation', 'result', false)
+        batch.entities.grep(Sketchup::Group).each do |point|
+          passed = point.get_attribute('CJ_Insolation', 'passed')
+          move.call(point.entities, sets[passed]) if sets.key?(passed)
+        end
+      end
+      sets
     end
     def radius
       Sketchup.read_default('CJ_ResultStyle', 'radius_mm', 100.0).to_f
