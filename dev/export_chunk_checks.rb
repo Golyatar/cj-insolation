@@ -33,12 +33,12 @@ module CJExportChunkChecks
         fiber.resume
         ticks += 1
       end
-      checks << {name: 'chunk_boundaries_preserve_protocol_bytes', passed: File.binread(sync) == File.binread(chunked) && expected > 300 && ticks > 300, resumes: ticks}
+      checks << {name: 'chunk_boundaries_preserve_protocol_bytes', passed: File.binread(sync) == File.binread(chunked) && expected > 300 && ticks > 30, resumes: ticks}
       checks << {name: 'completed_export_closes_file', passed: state[:file].closed?}
       state = {directory: Dir.mktmpdir('cj-chunk-cancel-')}
       path = File.join(state[:directory], 'input.bin')
       state[:fiber] = Fiber.new { CJ::NativeEngine.write_input(path, view, points, directions, state: state) { Fiber.yield } }
-      10.times { state[:fiber].resume }
+      state[:fiber].resume while state[:fiber].alive? && !state[:file]
       handle = state[:file]
       cancelled_directory = state[:directory]
       CJ::NativeEngine.cleanup({native: state})

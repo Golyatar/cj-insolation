@@ -39,6 +39,7 @@ module CJProgressChecks
       @checks << {name: 'real_dialog_rendered', passed: @render_info && @render_info['title'] == 'Подготовка модели'}
       @checks << {name: 'dialog_has_no_vertical_scroll', passed: @render_info && @render_info['scrollHeight'] <= @render_info['height']}
       @checks << {name: 'cancel_button_fully_visible', passed: @render_info && @render_info['buttonBottom'] <= @render_info['height']}
+      @checks << {name: 'export_bar_has_real_fraction', passed: @render_info && @render_info['fraction'].to_f > 0 && @render_info['fraction'].to_f < 100 && !@render_info['busy']}
       @checks << {name: 'other_ui_timers_run_during_export', passed: @ticks >= 3, ticks: @ticks}
       @checks << {name: 'cancelled_before_worker_launch', passed: @cancel_sent && !@worker_started && !@job[:native]}
       @checks << {name: 'partial_export_removed', passed: @directory && !File.exist?(@directory)}
@@ -52,9 +53,9 @@ module CJProgressChecks
     native = @job[:native]
     @directory ||= native && native[:directory]
     @worker_started ||= native && native[:pid]
-    if native && native[:triangles].to_i >= 4096 && !@cancel_sent
+    if native && native[:total_triangles].to_i > 0 && native[:triangles].to_i >= [4096, native[:total_triangles] / 50].max && !@cancel_sent
       @cancel_sent = true
-      @job[:dialog].execute_script("sketchup.progress_probe({title:document.getElementById('label').textContent,scrollHeight:document.documentElement.scrollHeight,height:window.innerHeight,buttonBottom:document.getElementById('cancel').getBoundingClientRect().bottom});document.getElementById('cancel').click()")
+      @job[:dialog].execute_script("sketchup.progress_probe({title:document.getElementById('label').textContent,scrollHeight:document.documentElement.scrollHeight,height:window.innerHeight,buttonBottom:document.getElementById('cancel').getBoundingClientRect().bottom,fraction:document.getElementById('bar').getAttribute('aria-valuenow'),busy:document.getElementById('bar').classList.contains('busy')});document.getElementById('cancel').click()")
     end
     if Process.clock_gettime(Process::CLOCK_MONOTONIC) - @started > 30 && !@cancel_sent
       @cancel_sent = true

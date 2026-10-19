@@ -844,15 +844,21 @@ module CJ
         *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
         body{font:14px 'Segoe UI',Arial,sans-serif;padding:18px;color:#202832;background:#f6f8fb}
         #label{font-size:17px;font-weight:600;margin-bottom:8px}#detail{min-height:36px;color:#526171;line-height:1.4}
-        progress{display:block;width:100%;height:18px;margin:12px 0}footer{display:flex;align-items:center;justify-content:space-between}
+        #bar{width:100%;height:18px;margin:12px 0;background:#dce3ec;border-radius:9px;overflow:hidden}
+        #fill{height:100%;width:0;background:#2879c9;border-radius:9px;transition:width .12s linear}
+        #bar.busy #fill{width:35%;animation:working 1.2s ease-in-out infinite}
+        @keyframes working{from{transform:translateX(-100%)}to{transform:translateX(390%)}}
+        footer{display:flex;align-items:center;justify-content:space-between}
         #elapsed{color:#526171}button{padding:8px 18px;font:inherit;cursor:pointer}
         </style><div id="label" role="status" aria-live="polite">Подготовка расчёта</div>
-        <div id="detail">Открываем окно расчёта…</div><progress id="bar" max="100"></progress>
-        <footer><span id="elapsed">0 с</span><button id="cancel" onclick="this.disabled=true;sketchup.cancel_calculation()">Отменить</button></footer>
+        <div id="detail">Открываем окно расчёта…</div><div id="bar" class="busy" role="progressbar" aria-label="Ход текущего этапа" aria-valuemin="0" aria-valuemax="100"><div id="fill"></div></div>
+        <footer><span><span id="percent"></span><span id="elapsed">0 с</span></span><button id="cancel" onclick="this.disabled=true;sketchup.cancel_calculation()">Отменить</button></footer>
         <script>
         const started=Date.now();setInterval(()=>{document.getElementById('elapsed').textContent=Math.floor((Date.now()-started)/1000)+' с'},250);
         function updatePhase(s){document.getElementById('label').textContent=s.title;document.getElementById('detail').textContent=s.detail;
-          const bar=document.getElementById('bar');if(s.total>0){bar.value=Math.floor(s.done*100/s.total)}else{bar.removeAttribute('value')}}
+          const bar=document.getElementById('bar'),fill=document.getElementById('fill'),percent=document.getElementById('percent');
+          if(s.total>0){const value=Math.max(0,Math.min(100,Math.floor(s.done*100/s.total)));bar.classList.remove('busy');bar.setAttribute('aria-valuenow',value);fill.style.width=value+'%';percent.textContent=value+'% · '}
+          else{bar.classList.add('busy');bar.removeAttribute('aria-valuenow');fill.style.width='';percent.textContent=''}}
         function updateProgress(done,total){updatePhase({title:'Расчёт инсоляции',detail:'Проверено направлений: '+done+' из '+total,done:done,total:total})}
         document.addEventListener('DOMContentLoaded',()=>requestAnimationFrame(()=>requestAnimationFrame(()=>sketchup.calculation_ready())));
         </script></html>
@@ -860,8 +866,8 @@ module CJ
       dialog
     end
 
-    def update_calculation_phase(job, title, detail = '')
-      job[:dialog].execute_script("updatePhase(#{JSON.generate({title: title, detail: detail})})")
+    def update_calculation_phase(job, title, detail = '', done: nil, total: nil)
+      job[:dialog].execute_script("updatePhase(#{JSON.generate({title: title, detail: detail, done: done, total: total})})")
       Sketchup.set_status_text("CJ: #{title}. #{detail}", SB_PROMPT)
     end
 
