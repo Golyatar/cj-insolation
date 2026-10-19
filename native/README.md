@@ -16,8 +16,10 @@ Output: ASCII `CJOUT001`, point count, direction count, then one distance per ra
 
 ## Integration and limits
 
-Ruby exports a fresh scene in the main thread. Nested transforms, visibility and real face holes are included; point handles and generated results are excluded. SketchUp versions before 2026 cannot query visibility with an instance as the final path element, so visibility is queried on leaf geometry instead.
+Ruby exports a fresh scene in the main thread. Nested transforms, visibility and real face holes are included; point handles and generated results are excluded. Visibility is checked explicitly on every ancestor, tag and tag folder. Hidden geometry is excluded even if Show Hidden options are enabled. Images are exported through their internal image definitions, including the instance transforms. Non-geometric entities are skipped.
 
-Glued cutting components do not necessarily modify the host face mesh. These scenes, active sections and images fall back to SketchUp. Boundary/self-contact tolerances need further real-model coverage; the current worker is a development implementation, not a claim of universal parity.
+Glued cutting components do not necessarily modify the host face mesh. These scenes and active sections with DisplaySectionCuts enabled fall back to SketchUp. Stored sections with cuts disabled do not block export. Boundary/self-contact tolerances need further real-model coverage; the current worker is a development implementation, not a claim of universal parity.
 
 Intersection work runs in a child process that never touches SketchUp API. The plugin polls completion, supports cancellation, removes temporary files and retains the existing display/Undo flow. There is no live tracking or scene cache.
+
+Visibility regression: load `dev/export_visibility_checks.rb` and run `CJExportVisibilityChecks.run`. It uses a temporary fixture rolled back within the current model, including nested hidden tag folders, hidden faces/instances/images and enabled/disabled section cuts.

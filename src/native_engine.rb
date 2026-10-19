@@ -16,18 +16,34 @@ module CJ
     def write_input(path, model, points, vectors)
       triangles = 0
       excluded = RayTubesUp.raycast_exclusions(model)
+      image_definitions = {}
+      model.definitions.each do |definition|
+        next unless definition.image?
+        definition.instances.each { |image| image_definitions[image.entityID] = definition }
+      end
+      visible_tags = model.layers.to_h do |tag|
+        visible = tag.visible?
+        folder = tag.folder
+        while folder
+          visible &&= folder.visible?
+          folder = folder.folder
+        end
+        [tag.entityID, visible]
+      end
       File.open(path, 'wb') do |file|
         file.write('CJIN0001' + [0, points.length, vectors.length].pack('L<3'))
         visit = lambda do |entities, transform, ancestry|
-          raise Unsupported, 'активное сечение' if entities.grep(Sketchup::SectionPlane).any?(&:active?)
+          if model.rendering_options['DisplaySectionCuts'] && entities.grep(Sketchup::SectionPlane).any?(&:active?)
+            raise Unsupported, 'активное сечение'
+          end
           entities.each do |entity|
-            next unless entity.is_a?(Sketchup::Drawingelement)
-            next if excluded.include?(entity) || entity.get_attribute('CJ_Insolation', 'result', false)
-            next if entity.hidden? || !entity.layer.visible?
-            path_entities = ancestry + [entity]
             instance = entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
-            # Before SU 2026 visibility queries cannot end at an instance.
-            next unless instance || model.drawing_element_visible?(Sketchup::InstancePath.new(path_entities))
+            next unless instance || entity.is_a?(Sketchup::Face) || entity.is_a?(Sketchup::Image)
+            next if excluded.include?(entity) || entity.get_attribute('CJ_Insolation', 'result', false)
+            next if entity.hidden? || !visible_tags.fetch(entity.layer.entityID, false)
+            path_entities = ancestry + [entity]
+            # Visibility is explicit, including tag folders: hidden geometry is
+            # excluded even when SketchUp's Show Hidden options are enabled.
             if entity.is_a?(Sketchup::Face)
               mesh = entity.mesh(0)
               mesh.polygons.each do |indices|
@@ -42,7 +58,9 @@ module CJ
               end
               visit.call(entity.definition.entities, transform * entity.transformation, path_entities)
             elsif entity.is_a?(Sketchup::Image)
-              raise Unsupported, 'изображение в модели'
+              definition = image_definitions[entity.entityID]
+              raise Unsupported, 'не найдена геометрия изображения' unless definition
+              visit.call(definition.entities, transform * entity.transformation, path_entities)
             end
           end
         end
