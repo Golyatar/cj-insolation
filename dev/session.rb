@@ -9,11 +9,11 @@ module CJDevelopment
   def self.reload
     # Compile before loading so a syntax error does not partially redefine the plugin.
     RubyVM::InstructionSequence.compile_file(SOURCE)
-    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_placement.rb'))
+    RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_geometry.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_components.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'result_style.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'updates.rb'))
-    %w[settings saved_points interface point_observers].each { |name| RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', name + '.rb')) }
+    %w[settings saved_points interface native_engine].each { |name| RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', name + '.rb')) }
     previous_verbose = $VERBOSE
     begin
       $VERBOSE = nil # Existing constants are expected during development reloads.
@@ -26,6 +26,14 @@ module CJDevelopment
           plugin.send(:remove_const, name) if plugin.const_defined?(name, false)
         end
       end
+      if defined?(CJ::PointObservers)
+        observers = CJ::PointObservers.instance_variable_get(:@watchers) || {}
+        observers.each { |model, watcher| watcher.reset; model.remove_observer(watcher) }
+        app = CJ::PointObservers.instance_variable_get(:@app_observer)
+        Sketchup.remove_observer(app) if app
+        CJ.send(:remove_const, :PointObservers)
+      end
+      CJ.send(:remove_const, :WindowPlacement) if defined?(CJ::WindowPlacement)
       Kernel.load(SOURCE)
       CJ::WindowComponents.remove_old_markers(Sketchup.active_model) if defined?(CJ::WindowComponents)
       CJ::RayTubesUp.remove_instance_variable(:@ray_vectors) if CJ::RayTubesUp.instance_variable_defined?(:@ray_vectors)

@@ -22,11 +22,11 @@ module CJWorkflowChecks
       rejected = true
     end
     checks << { name: 'invalid_window_rejected', passed: rejected }
-    checks << { name: 'all_settings_available', passed: settings.keys.sort == %w[live mode radius window] }
+    checks << { name: 'all_settings_available', passed: settings.keys.sort == %w[engine mode radius window] }
     original = Sketchup.read_default(CJ::Settings::KEY, 'values', '{}')
     radius = CJ::ResultStyle.radius
     begin
-      changed = settings.merge('mode' => 'surface', 'live' => false, 'window' => [1500, 1600, 300, 150, 70, 60])
+      changed = settings.merge('mode' => 'surface', 'engine' => 'sketchup', 'window' => [1500, 1600, 300, 150, 70, 60])
       CJ::Settings.save(changed)
       checks << { name: 'settings_persistence_roundtrip', passed: CJ::Settings.values == changed }
     ensure

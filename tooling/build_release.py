@@ -24,14 +24,17 @@ with zipfile.ZipFile(rbz, 'w', zipfile.ZIP_DEFLATED) as archive:
     archive.write(ROOT / 'src/version.rb', 'cj_insolation/version.rb')
     archive.write(ROOT / 'src/updates.rb', 'cj_insolation/updates.rb')
     archive.write(ROOT / 'src/result_style.rb', 'cj_insolation/result_style.rb')
-    archive.write(ROOT / 'src/window_placement.rb', 'cj_insolation/window_placement.rb')
+    archive.write(ROOT / 'src/window_geometry.rb', 'cj_insolation/window_geometry.rb')
     archive.write(ROOT / 'src/window_components.rb', 'cj_insolation/window_components.rb')
-    for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'point_observers.rb']:
+    for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'native_engine.rb']:
         archive.write(ROOT / 'src' / name, 'cj_insolation/' + name)
+    engine = ROOT / 'native/build/cj_engine.exe'
+    if not engine.is_file():
+        raise RuntimeError('Build the C++ worker first: ./native/build.ps1')
+    archive.write(engine, 'cj_insolation/bin/cj_engine.exe')
     for icon in (ROOT / 'src/icons').glob('*'):
         archive.write(icon, 'cj_insolation/icons/' + icon.name)
     archive.write(ROOT / 'INSTALL.md', 'cj_insolation/INSTALL.md')
-    archive.write(ROOT / 'WINDOW_POINTS.md', 'cj_insolation/WINDOW_POINTS.md')
     archive.write(ROOT / 'WINDOW_COMPONENTS.md', 'cj_insolation/WINDOW_COMPONENTS.md')
 with zipfile.ZipFile(rbz) as archive:
     assert archive.testzip() is None
@@ -43,8 +46,8 @@ source = OUTPUT / f'cj-insolation-{VERSION}-source.zip'
 with zipfile.ZipFile(source, 'w', zipfile.ZIP_DEFLATED) as archive:
     for name in ['README.md', 'INSTALL.md', 'CHANGELOG.md', 'WINDOW_POINTS.md', 'WINDOW_COMPONENTS.md', 'RELEASING.md', '.gitignore']:
         archive.write(ROOT / name, name)
-    for folder in ['src', 'tooling', 'dev', 'reference']:
+    for folder in ['src', 'tooling', 'dev', 'native', 'reference']:
         for file in (ROOT / folder).rglob('*'):
-            if file.is_file() and not any(part in ('runtime', '__pycache__') for part in file.parts) and (file.suffix not in ('.pyc', '.csv', '.json') or file == ROOT / 'dev/window_examples.json') and file.name != 'config.example.toml':
+            if file.is_file() and not any(part in ('runtime', '__pycache__', 'build') for part in file.parts) and (file.suffix not in ('.pyc', '.csv', '.json') or file == ROOT / 'dev/window_examples.json') and file.name != 'config.example.toml':
                 archive.write(file, file.relative_to(ROOT).as_posix())
 print(json.dumps({'rbz': str(rbz), 'sha256': digest, 'source': str(source)}, ensure_ascii=False))

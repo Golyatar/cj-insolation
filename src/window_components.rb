@@ -16,8 +16,8 @@ module CJ
       validate(values)
       w,h,_wall,rear,_depth,rim=values.map(&:mm)
       left=Geom::Point3d.new(rim,rear,rim);right=Geom::Point3d.new(w-rim,rear,rim)
-      plan=WindowPlacement.plan_intersection(left,right,Geom::Point3d.new(0,0,rim),Geom::Point3d.new(w,0,rim))
-      p=WindowPlacement.height_point(plan,left,right,Geom::Point3d.new(0,0,h))
+      plan=WindowGeometry.plan_intersection(left,right,Geom::Point3d.new(0,0,rim),Geom::Point3d.new(w,0,rim))
+      p=WindowGeometry.height_point(plan,left,right,Geom::Point3d.new(0,0,h))
       # Component XY is the facade plane; positive Z faces outside.
       Geom::Point3d.new(p.x,p.z,-p.y)
     end

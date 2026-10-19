@@ -6,3 +6,5 @@ exports/*.csv
 reports/*.csv
 dist/
 tooling/mcp/config.example.toml
+
+native/build/

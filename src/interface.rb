@@ -6,17 +6,18 @@ module CJ
     attr_reader :commands, :toolbar
 
     def install
-      return if @toolbar
+      return if @toolbar && @layout == 2
+      @toolbar.hide if @toolbar
+      @layout = 2
       # SketchUp cannot remove individual buttons from an existing toolbar.
       # Hide the previous development panel when reloading in the same session.
       UI.toolbar('CJ').hide if defined?(CJ::RAY_TUBES_UP_UI_LOADED)
-      @toolbar = UI::Toolbar.new('CJ Инсоляция')
+      @toolbar = UI::Toolbar.new('CJ Инсоляция · C++')
       menu = UI.menu('Plugins').add_submenu('CJ Инсоляция')
       @commands = {}
       entries = [
         [:pick, 'Инсоляция — выбрать точки', 'insolation.png', -> { RayTubesUp.activate_pick_tool }],
         [:settings, 'Настройки CJ', 'settings.svg', -> { Settings.show }],
-        [:window_point, 'Инсоляция — точка по окну', 'window_point.svg', -> { WindowPlacement.activate }],
         [:insert, 'Вставить окно CJ', 'window_insert.svg', -> { WindowComponents.insert }],
         [:windows, 'Рассчитать окна CJ', 'windows_batch.svg', -> { WindowComponents.calculate }],
         [:select, 'Выделить точки CJ', 'point_select.svg', -> { SavedPoints.select_points }],

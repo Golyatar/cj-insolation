@@ -883,6 +883,7 @@ module CJ
         log("ERROR: #{finish_error.class}: #{finish_error.message}")
         UI.messagebox("Не удалось завершить расчёт: #{finish_error.message}")
       ensure
+        CJ::NativeEngine.cleanup(job) if defined?(CJ::NativeEngine)
         job[:dialog].close if job[:dialog].visible?
       end
     end
@@ -956,7 +957,7 @@ module CJ
       job[:operation_started] = true
       job[:hidden_states].each { |group, _hidden| group.hidden = true }
       dialog.show
-      process_calculation_chunk(job)
+      process_calculation_chunk(job) unless CJ::NativeEngine.start(job)
       job
     rescue => error
       if job
@@ -1072,10 +1073,10 @@ module CJ
 end
 
 Kernel.load(File.join(__dir__, 'result_style.rb'))
-Kernel.load(File.join(__dir__, 'window_placement.rb'))
+Kernel.load(File.join(__dir__, 'window_geometry.rb'))
 Kernel.load(File.join(__dir__, 'window_components.rb'))
 Kernel.load(File.join(__dir__, 'updates.rb'))
 Kernel.load(File.join(__dir__, 'settings.rb'))
 Kernel.load(File.join(__dir__, 'saved_points.rb'))
-Kernel.load(File.join(__dir__, 'point_observers.rb'))
+Kernel.load(File.join(__dir__, 'native_engine.rb'))
 Kernel.load(File.join(__dir__, 'interface.rb'))

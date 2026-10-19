@@ -13,9 +13,9 @@ module CJ
       stored = Base64.strict_decode64(stored.delete_prefix('b64:')) if stored.start_with?('b64:')
       raw = JSON.parse(stored)
       validate({ 'window' => WindowComponents::DEFAULTS, 'mode' => 'lines',
-                 'radius' => ResultStyle.radius, 'live' => true }.merge(raw))
+                 'radius' => ResultStyle.radius, 'engine' => 'cpp' }.merge(raw))
     rescue JSON::ParserError, ArgumentError, TypeError, RuntimeError
-      { 'window' => WindowComponents::DEFAULTS.dup, 'mode' => 'lines', 'radius' => 100.0, 'live' => true }
+      { 'window' => WindowComponents::DEFAULTS.dup, 'mode' => 'lines', 'radius' => 100.0, 'engine' => 'cpp' }
     end
 
     def validate(data)
@@ -24,8 +24,8 @@ module CJ
       raise ArgumentError, 'Выберите вид результата.' unless %w[lines surface summary].include?(data['mode'])
       r = data['radius']
       raise ArgumentError, 'Радиус: от 0 до 10000 мм.' unless r.is_a?(Numeric) && r.finite? && r.between?(0, 10000)
-      raise ArgumentError, 'Неверный режим пересчёта.' unless [true, false].include?(data['live'])
-      data.slice('window', 'mode', 'radius', 'live')
+      raise ArgumentError, 'Неизвестный способ расчёта.' unless %w[cpp sketchup].include?(data['engine'])
+      data.slice('window', 'mode', 'radius', 'engine')
     end
 
     def save(data)
@@ -56,12 +56,11 @@ module CJ
         </style><h1>Настройки CJ</h1><form id="form"><section><h2>Окно</h2>#{fields}<p>Размеры применяются при следующей вставке окна.</p></section>
         <section><h2>Результат</h2><label>Вид построения<select id="mode"><option value="lines">Линии</option><option value="surface">Поверхность</option><option value="summary">Итоги</option></select></label>
         <label>Радиус маркера точки, мм<input id="radius" type="number" min="0" max="10000" step="any" required></label><p>0 — без сферы. Вид и радиус применяются при следующем расчёте.</p></section>
-        <section><h2>Перемещение точек</h2><label><span>Автопересчёт после перемещения</span><input id="live" type="checkbox"></label><p>Выделите одну или несколько точек рамкой или с Shift и переместите обычным Move (M). После завершения пересчитаются перемещённые точки. При выключении используйте «Пересчитать точки CJ».</p></section>
-        <button type="submit">Сохранить</button><p id="error" role="alert"></p></form><script>
+        <section><h2>Расчёт</h2><label>Способ расчёта<select id="engine"><option value="cpp">C++ (быстрый)</option><option value="sketchup">SketchUp (совместимость)</option></select></label><p>Расчёт запускается кнопкой. Для неподдерживаемой геометрии используется SketchUp.</p></section><button type="submit">Сохранить</button><p id="error" role="alert"></p></form><script>
         const initial=#{JSON.generate(values)};
         initial.window.forEach((v,i)=>document.getElementById('w'+i).value=v);
-        document.getElementById('mode').value=initial.mode;document.getElementById('radius').value=initial.radius;document.getElementById('live').checked=initial.live;
-        document.getElementById('form').onsubmit=e=>{e.preventDefault();sketchup.save_settings(JSON.stringify({window:Array.from({length:6},(_,i)=>Number(document.getElementById('w'+i).value)),mode:document.getElementById('mode').value,radius:Number(document.getElementById('radius').value),live:document.getElementById('live').checked}));};
+        document.getElementById('mode').value=initial.mode;document.getElementById('radius').value=initial.radius;document.getElementById('engine').value=initial.engine;
+        document.getElementById('form').onsubmit=e=>{e.preventDefault();sketchup.save_settings(JSON.stringify({window:Array.from({length:6},(_,i)=>Number(document.getElementById('w'+i).value)),mode:document.getElementById('mode').value,radius:Number(document.getElementById('radius').value),engine:document.getElementById('engine').value}));};
         </script></html>
       HTML
       @dialog.add_action_callback('save_settings') do |_context, raw|
