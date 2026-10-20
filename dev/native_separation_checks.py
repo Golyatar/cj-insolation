@@ -39,6 +39,7 @@ def run():
         package = Path(json.loads(result.stdout)['rbz'])
         with zipfile.ZipFile(package) as archive:
             assert hashlib.sha256(archive.read('cj_insolation/bin/cj_engine.exe')).hexdigest() == expected
+            assert 'cj_insolation/geometry_cache.rb' in archive.namelist()
             assert not any('scene_cache' in n or 'scene_export' in n for n in archive.namelist())
         original_package = package.read_bytes()
 

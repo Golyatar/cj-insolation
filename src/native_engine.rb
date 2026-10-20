@@ -46,6 +46,8 @@ module CJ
       read_node = nil
       read_node = lambda do |entities, key|
         return nodes[key] if nodes.key?(key)
+        cache = state && state[:cache_entry]
+        cache.watch(entities) if cache
         node = {coordinates: [], children: []}
         nodes[key] = node
         entities.each do |entity|
@@ -57,7 +59,11 @@ module CJ
           face = entity.is_a?(Sketchup::Face)
           image = entity.is_a?(Sketchup::Image)
           next unless instance || face || image
-          next if excluded_ids[entity.entityID] || entity.get_attribute('CJ_Insolation', 'result', false)
+          if excluded_ids[entity.entityID] || entity.get_attribute('CJ_Insolation', 'result', false)
+            cache.remember(entity) if cache
+            next
+          end
+          cache.track(entity.layer) if cache
           next if entity.hidden? || !visible_tags.fetch(entity.layer.entityID, false)
           if face
             mesh = entity.mesh(0)
@@ -92,6 +98,7 @@ module CJ
             buffer << transform_coordinates(coordinates, matrix).pack('E*')
             if buffer.bytesize >= 262144
               file.write(buffer)
+              state[:geometry_digest]&.update(buffer) if state
               buffer.clear
             end
             triangles += coordinates.length / 9
@@ -101,6 +108,7 @@ module CJ
         end
         visit.call(root, Geom::Transformation.new)
         file.write(buffer) unless buffer.empty?
+        state[:geometry_digest]&.update(buffer) if state
         points.each { |p| file.write(p.to_a.pack('E3')) }
         vectors.each { |v| file.write(v.to_a.pack('E3')) }
         file.seek(8)
@@ -169,9 +177,30 @@ module CJ
             deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.08
           end
         end
-        RayTubesUp.prepare_calculation(job, &checkpoint)
-        write_input(File.join(directory, 'input.bin'), job[:model], job[:points], job[:vectors],
-                    excluded: job[:hidden_states].map(&:first), state: state, &checkpoint)
+        cache = GeometryCache.state(job[:model])
+        state[:cache_entry] = cache
+        warm = cache.valid?
+        RayTubesUp.prepare_calculation(job, groups: warm ? cache.excluded : nil, &checkpoint)
+        job[:hidden_states].each { |entity, _| cache.remember(entity) }
+        path = File.join(directory, 'input.bin')
+        state[:input_path] = path
+        if cache.valid?
+          begin
+            next cache.write(path, job[:points], job[:vectors], state, &checkpoint)
+          rescue GeometryCache::Invalid => cache_error
+            RayTubesUp.log(cache_error.message)
+          end
+        end
+        state[:cache_hit] = false
+        state.delete(:triangles)
+        state.delete(:total_triangles)
+        token = cache.begin_export
+        state[:geometry_digest] = Digest::SHA256.new
+        result = write_input(path, job[:model], job[:points], job[:vectors],
+                             excluded: job[:hidden_states].map(&:first), state: state, &checkpoint)
+        state[:triangles] = result
+        state[:input_path] = cache.store(path, state, token)
+        result
       end
       job[:phase] = :exporting
       RayTubesUp.update_calculation_phase(job, 'Подготовка модели', 'Проверка видимой геометрии…')
@@ -191,7 +220,13 @@ module CJ
       if state[:fiber].alive?
         count = state[:triangles] || 0
         total = state[:total_triangles]
-        detail = total ? "Подготовлено треугольников: #{count} из #{total}" : 'Чтение видимой геометрии…'
+        detail = if state[:cache_hit]
+                   'Используется подготовленная геометрия…'
+                 elsif total
+                   "Подготовлено треугольников: #{count} из #{total}"
+                 else
+                   'Чтение видимой геометрии…'
+                 end
         RayTubesUp.update_calculation_phase(job, 'Подготовка модели', detail, done: count, total: total)
         job[:timer] = UI.start_timer(0.001, false) { export_chunk(job) }
       else
@@ -199,7 +234,8 @@ module CJ
         state[:triangles] = result
         state[:export_ms] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - state[:started]) * 1000
         raise 'Рабочий EXE изменён во время подготовки.' unless approved?(state[:worker])
-        state[:pid] = Process.spawn(state[:worker], File.join(state[:directory], 'input.bin'), File.join(state[:directory], 'output.bin'),
+        state[:scene_token] = state[:cache_entry].token
+        state[:pid] = Process.spawn(state[:worker], state[:input_path], File.join(state[:directory], 'output.bin'),
                                     out: File::NULL, err: File.join(state[:directory], 'error.txt'))
         job[:phase] = :cpp
         RayTubesUp.update_calculation_phase(job, 'Расчёт инсоляции', "Точек: #{job[:points].length}; направлений: #{job[:total_rays]}")
@@ -212,6 +248,9 @@ module CJ
     end
 
     def read_output(job)
+      if job[:native][:scene_token] != job[:native][:cache_entry].token
+        raise 'Геометрия или видимость модели изменилась во время расчёта. Запустите расчёт повторно.'
+      end
       data = File.binread(File.join(job[:native][:directory], 'output.bin'))
       np, nd = data.byteslice(8, 8)&.unpack('L<2')
       unless data.byteslice(0, 8) == 'CJOUT001' && np == job[:points].length && nd == job[:vectors].length && data.bytesize == 16 + np * nd * 8
@@ -228,6 +267,7 @@ module CJ
         end
       end
       @last_metrics = { triangles: job[:native][:triangles], rays: np * nd,
+                        geometry_cache_hit: job[:native][:cache_hit],
                         unique_triangles: job[:native][:unique_triangles],
                         export_ms: job[:native][:export_ms],
                         total_before_display_ms: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - job[:native][:started]) * 1000 }
@@ -257,6 +297,8 @@ module CJ
       # Own and close the file directly; do not resume an abandoned export there.
       file = state.delete(:file)
       file.close if file && !file.closed?
+      source = state.delete(:cache_source)
+      source.close if source && !source.closed?
       state.delete(:fiber)
       if state[:pid]
         begin

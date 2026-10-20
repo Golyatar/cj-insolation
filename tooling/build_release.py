@@ -30,7 +30,7 @@ with zipfile.ZipFile(rbz, 'w', zipfile.ZIP_DEFLATED) as archive:
     archive.write(ROOT / 'src/result_style.rb', 'cj_insolation/result_style.rb')
     archive.write(ROOT / 'src/window_geometry.rb', 'cj_insolation/window_geometry.rb')
     archive.write(ROOT / 'src/window_components.rb', 'cj_insolation/window_components.rb')
-    for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'native_engine.rb']:
+    for name in ['settings.rb', 'saved_points.rb', 'interface.rb', 'native_engine.rb', 'geometry_cache.rb']:
         archive.write(ROOT / 'src' / name, 'cj_insolation/' + name)
     archive.write(engine, 'cj_insolation/bin/cj_engine.exe')
     for icon in (ROOT / 'src/icons').glob('*'):

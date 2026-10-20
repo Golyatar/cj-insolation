@@ -872,9 +872,9 @@ module CJ
       Sketchup.set_status_text("CJ: #{title}. #{detail}", SB_PROMPT)
     end
 
-    def prepare_calculation(job, &checkpoint)
+    def prepare_calculation(job, groups: nil, &checkpoint)
       return if job[:prepared]
-      groups = result_groups(job[:model], &checkpoint) + CJ::SavedPoints.all(job[:model])
+      groups ||= result_groups(job[:model], &checkpoint) + CJ::SavedPoints.all(job[:model])
       job[:hidden_states] = groups.map { |group| [group, group.hidden?] }
       job[:model].start_operation('CJ Инсоляция: несколько точек', true)
       job[:operation_started] = true
@@ -1146,5 +1146,6 @@ Kernel.load(File.join(__dir__, 'window_components.rb'))
 Kernel.load(File.join(__dir__, 'updates.rb'))
 Kernel.load(File.join(__dir__, 'settings.rb'))
 Kernel.load(File.join(__dir__, 'saved_points.rb'))
+Kernel.load(File.join(__dir__, 'geometry_cache.rb'))
 Kernel.load(File.join(__dir__, 'native_engine.rb'))
 Kernel.load(File.join(__dir__, 'interface.rb'))

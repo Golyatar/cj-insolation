@@ -13,7 +13,7 @@ module CJDevelopment
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'window_components.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'result_style.rb'))
     RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', 'updates.rb'))
-    %w[settings saved_points interface native_engine].each { |name| RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', name + '.rb')) }
+    %w[settings saved_points interface geometry_cache native_engine].each { |name| RubyVM::InstructionSequence.compile_file(File.join(ROOT, 'src', name + '.rb')) }
     previous_verbose = $VERBOSE
     begin
       $VERBOSE = nil # Existing constants are expected during development reloads.
