@@ -9,3 +9,4 @@ tooling/mcp/config.example.toml
 
 native/build/
 native/stable/*.exe
+rhino/bin/*.exe
