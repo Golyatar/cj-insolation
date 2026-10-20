@@ -22,7 +22,7 @@ module CJWorkflowChecks
       rejected = true
     end
     checks << { name: 'invalid_window_rejected', passed: rejected }
-    checks << { name: 'all_settings_available', passed: settings.keys.sort == %w[engine mode radius window] }
+    checks << { name: 'all_settings_available', passed: settings.keys.sort == %w[engine mode radius ray_length_m window] }
     original = Sketchup.read_default(CJ::Settings::KEY, 'values', '{}')
     radius = CJ::ResultStyle.radius
     begin

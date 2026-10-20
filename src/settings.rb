@@ -13,19 +13,22 @@ module CJ
       stored = Base64.strict_decode64(stored.delete_prefix('b64:')) if stored.start_with?('b64:')
       raw = JSON.parse(stored)
       validate({ 'window' => WindowComponents::DEFAULTS, 'mode' => 'lines',
-                 'radius' => ResultStyle.radius, 'engine' => 'cpp' }.merge(raw))
+                 'radius' => ResultStyle.radius, 'engine' => 'cpp', 'ray_length_m' => 1000.0 }.merge(raw))
     rescue JSON::ParserError, ArgumentError, TypeError, RuntimeError
-      { 'window' => WindowComponents::DEFAULTS.dup, 'mode' => 'lines', 'radius' => 100.0, 'engine' => 'cpp' }
+      { 'window' => WindowComponents::DEFAULTS.dup, 'mode' => 'lines', 'radius' => 100.0, 'engine' => 'cpp', 'ray_length_m' => 1000.0 }
     end
 
     def validate(data)
       raise ArgumentError, 'Неверные настройки.' unless data.is_a?(Hash)
+      data = {'ray_length_m' => 1000.0}.merge(data)
       WindowComponents.validate(data['window'])
       raise ArgumentError, 'Выберите вид результата.' unless %w[lines surface summary].include?(data['mode'])
       r = data['radius']
       raise ArgumentError, 'Радиус: от 0 до 10000 мм.' unless r.is_a?(Numeric) && r.finite? && r.between?(0, 10000)
       raise ArgumentError, 'Неизвестный способ расчёта.' unless %w[cpp sketchup].include?(data['engine'])
-      data.slice('window', 'mode', 'radius', 'engine')
+      length = data['ray_length_m']
+      raise ArgumentError, 'Длина свободных лучей и сегментов: от 0,01 до 100000 м.' unless length.is_a?(Numeric) && length.finite? && length.between?(0.01, 100000)
+      data.slice('window', 'mode', 'radius', 'engine', 'ray_length_m')
     end
 
     def save(data)
@@ -55,12 +58,14 @@ module CJ
         p{color:#526171;line-height:1.5}button{padding:12px 20px;background:#ffd36a;border:0;border-radius:8px;font:600 14px 'Segoe UI';cursor:pointer}#error{color:#c53939}
         </style><h1>Настройки CJ</h1><form id="form"><section><h2>Окно</h2>#{fields}<p>Размеры применяются при следующей вставке окна.</p></section>
         <section><h2>Результат</h2><label>Вид построения<select id="mode"><option value="lines">Линии</option><option value="surface">Поверхность</option><option value="summary">Итоги</option></select></label>
-        <label>Радиус маркера точки, мм<input id="radius" type="number" min="0" max="10000" step="any" required></label><p>0 — без сферы. Вид и радиус применяются при следующем расчёте.</p></section>
+        <label>Радиус маркера точки, мм<input id="radius" type="number" min="0" max="10000" step="any" required></label>
+        <label>Длина свободных лучей и сегментов, м<input id="ray_length_m" type="number" min="0.01" max="100000" step="any" required></label>
+        <p>Длина задаёт размер зелёных лучей и участков поверхности. Красные заканчиваются у препятствия. 0 в радиусе — без сферы. Настройки применяются при следующем расчёте.</p></section>
         <section><h2>Расчёт</h2><label>Способ расчёта<select id="engine"><option value="cpp">C++ (быстрый)</option><option value="sketchup">SketchUp (совместимость)</option></select></label><p>Расчёт запускается кнопкой. Для неподдерживаемой геометрии используется SketchUp.</p></section><button type="submit">Сохранить</button><p id="error" role="alert"></p></form><script>
         const initial=#{JSON.generate(values)};
         initial.window.forEach((v,i)=>document.getElementById('w'+i).value=v);
-        document.getElementById('mode').value=initial.mode;document.getElementById('radius').value=initial.radius;document.getElementById('engine').value=initial.engine;
-        document.getElementById('form').onsubmit=e=>{e.preventDefault();sketchup.save_settings(JSON.stringify({window:Array.from({length:6},(_,i)=>Number(document.getElementById('w'+i).value)),mode:document.getElementById('mode').value,radius:Number(document.getElementById('radius').value),engine:document.getElementById('engine').value}));};
+        document.getElementById('mode').value=initial.mode;document.getElementById('radius').value=initial.radius;document.getElementById('engine').value=initial.engine;document.getElementById('ray_length_m').value=initial.ray_length_m;
+        document.getElementById('form').onsubmit=e=>{e.preventDefault();sketchup.save_settings(JSON.stringify({window:Array.from({length:6},(_,i)=>Number(document.getElementById('w'+i).value)),mode:document.getElementById('mode').value,radius:Number(document.getElementById('radius').value),engine:document.getElementById('engine').value,ray_length_m:Number(document.getElementById('ray_length_m').value)}));};
         </script></html>
       HTML
       @dialog.add_action_callback('save_settings') do |_context, raw|

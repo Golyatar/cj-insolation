@@ -789,7 +789,7 @@ module CJ
       first_number = [model.get_attribute('CJ_Insolation', 'next_point_number', 1), (existing_numbers.max || 0) + 1].max
       model.set_attribute('CJ_Insolation', 'next_point_number', first_number + calculations.length)
       batch.set_attribute('CJ_Insolation', 'first_point_number', first_number)
-      maxlen = (DEFAULT_MAX_LEN_M * 1000.0).mm
+      maxlen = (CJ::Settings.values['ray_length_m'] * 1000.0).mm
       calculations.each_with_index do |calculation, index|
         assessment = assess_insolation(calculation[:results])
         layers = layer_sets[assessment[:passed]]
